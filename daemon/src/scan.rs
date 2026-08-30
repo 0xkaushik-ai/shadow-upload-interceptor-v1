@@ -4,12 +4,6 @@ pub const OPENSSH_PRIVATE_KEY_RULE: &str = "openssh_private_key";
 pub const AWS_ACCESS_KEY_RULE: &str = "aws_access_key_id";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Decision {
-    Allow,
-    Block,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleId {
     PemPrivateKey,
     Pkcs8PrivateKey,
@@ -29,9 +23,9 @@ impl RuleId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ScanResult {
-    pub decision: Decision,
-    pub rule: Option<RuleId>,
+pub enum ScanResult {
+    Allow,
+    Block(RuleId),
 }
 
 struct Rule {
@@ -79,33 +73,21 @@ fn matches(bytes: &[u8], pattern: &Pattern) -> bool {
 pub fn scan(bytes: &[u8]) -> ScanResult {
     for rule in RULES {
         if matches(bytes, &rule.pattern) {
-            return ScanResult {
-                decision: Decision::Block,
-                rule: Some(rule.id),
-            };
+            return ScanResult::Block(rule.id);
         }
     }
 
-    ScanResult {
-        decision: Decision::Allow,
-        rule: None,
-    }
+    ScanResult::Allow
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Decision, RuleId, ScanResult, scan};
+    use super::{RuleId, ScanResult, scan};
 
     #[test]
     fn blocks_the_fake_pem_fixture() {
         let fixture = include_bytes!("../../testdata/block.pem");
-        assert_eq!(
-            scan(fixture),
-            ScanResult {
-                decision: Decision::Block,
-                rule: Some(RuleId::PemPrivateKey),
-            }
-        );
+        assert_eq!(scan(fixture), ScanResult::Block(RuleId::PemPrivateKey));
     }
 
     #[test]
@@ -120,68 +102,35 @@ mod tests {
         ];
 
         for (bytes, expected_rule) in cases {
-            assert_eq!(
-                scan(bytes),
-                ScanResult {
-                    decision: Decision::Block,
-                    rule: Some(expected_rule),
-                }
-            );
+            assert_eq!(scan(bytes), ScanResult::Block(expected_rule));
         }
 
         let fake_access_key = [b"AKIA".as_slice(), b"1234567890ABCDEF"].concat();
         assert_eq!(
             scan(&fake_access_key),
-            ScanResult {
-                decision: Decision::Block,
-                rule: Some(RuleId::AwsAccessKeyId),
-            }
+            ScanResult::Block(RuleId::AwsAccessKeyId)
         );
     }
 
     #[test]
     fn allows_the_harmless_fixture_regardless_of_filename() {
         let fixture = include_bytes!("../../testdata/allow.txt");
-        assert_eq!(
-            scan(fixture),
-            ScanResult {
-                decision: Decision::Allow,
-                rule: None,
-            }
-        );
+        assert_eq!(scan(fixture), ScanResult::Allow);
     }
 
     #[test]
     fn allows_empty_input() {
-        assert_eq!(
-            scan(&[]),
-            ScanResult {
-                decision: Decision::Allow,
-                rule: None,
-            }
-        );
+        assert_eq!(scan(&[]), ScanResult::Allow);
     }
 
     #[test]
     fn allows_binary_noise_without_a_registered_marker() {
         let fixture = [0, 159, 146, 150, 255, 12, 0, 44, 8];
-        assert_eq!(
-            scan(&fixture),
-            ScanResult {
-                decision: Decision::Allow,
-                rule: None,
-            }
-        );
+        assert_eq!(scan(&fixture), ScanResult::Allow);
     }
 
     #[test]
     fn does_not_block_an_aws_environment_variable_name_without_a_key() {
-        assert_eq!(
-            scan(b"AWS_ACCESS_KEY_ID=replace-me"),
-            ScanResult {
-                decision: Decision::Allow,
-                rule: None,
-            }
-        );
+        assert_eq!(scan(b"AWS_ACCESS_KEY_ID=replace-me"), ScanResult::Allow);
     }
 }

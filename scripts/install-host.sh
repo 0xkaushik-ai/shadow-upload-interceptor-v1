@@ -13,11 +13,15 @@ DAEMON_MANIFEST="${REPO_DIR}/daemon/Cargo.toml"
 CONFIG_ROOT="${XDG_CONFIG_HOME:-${HOME}/.config}"
 SYSTEMD_USER_DIR="${SHADOW_SYSTEMD_USER_DIR:-${CONFIG_ROOT}/systemd/user}"
 SERVICE_FILE="${SYSTEMD_USER_DIR}/${SERVICE_NAME}"
+PLATFORM="$(uname -s)"
+LAUNCH_LABEL="com.secureintent.shadow"
+LAUNCH_AGENTS_DIR="${SHADOW_LAUNCH_AGENTS_DIR:-${HOME}/Library/LaunchAgents}"
+LAUNCH_PLIST="${LAUNCH_AGENTS_DIR}/${LAUNCH_LABEL}.plist"
 
 case "${BROWSER_FLAVOR}" in
-  chrome) BROWSER_CONFIG_DIR="google-chrome" ;;
-  chrome-for-testing) BROWSER_CONFIG_DIR="google-chrome-for-testing" ;;
-  chromium) BROWSER_CONFIG_DIR="chromium" ;;
+  chrome) BROWSER_CONFIG_DIR="google-chrome"; MAC_BROWSER_DIR="Google/Chrome" ;;
+  chrome-for-testing) BROWSER_CONFIG_DIR="google-chrome-for-testing"; MAC_BROWSER_DIR="Google/Chrome for Testing" ;;
+  chromium) BROWSER_CONFIG_DIR="chromium"; MAC_BROWSER_DIR="Chromium" ;;
   *)
     echo "Unsupported browser flavor: ${BROWSER_FLAVOR}" >&2
     echo "Expected chrome, chrome-for-testing, or chromium." >&2
@@ -33,17 +37,25 @@ case "${SERVICE_MODE}" in
     ;;
 esac
 
-HOST_DIR="${SHADOW_NATIVE_HOST_DIR:-${CONFIG_ROOT}/${BROWSER_CONFIG_DIR}/NativeMessagingHosts}"
+if [[ "${PLATFORM}" == "Darwin" ]]; then
+  HOST_DIR="${SHADOW_NATIVE_HOST_DIR:-${HOME}/Library/Application Support/${MAC_BROWSER_DIR}/NativeMessagingHosts}"
+else
+  HOST_DIR="${SHADOW_NATIVE_HOST_DIR:-${CONFIG_ROOT}/${BROWSER_CONFIG_DIR}/NativeMessagingHosts}"
+fi
 HOST_MANIFEST="${HOST_DIR}/${HOST_NAME}.json"
 
-for required_command in awk cargo node realpath sha256sum stat; do
+for required_command in cargo node; do
   if ! command -v "${required_command}" >/dev/null 2>&1; then
     echo "Missing installer dependency: ${required_command}" >&2
     exit 1
   fi
 done
-if [[ "${SERVICE_MODE}" == "install" ]] && ! command -v systemctl >/dev/null 2>&1; then
+if [[ "${SERVICE_MODE}" == "install" && "${PLATFORM}" != "Darwin" ]] && ! command -v systemctl >/dev/null 2>&1; then
   echo "systemctl is required to install the detached user service." >&2
+  exit 1
+fi
+if [[ "${SERVICE_MODE}" == "install" && "${PLATFORM}" == "Darwin" ]] && ! command -v launchctl >/dev/null 2>&1; then
+  echo "launchctl is required to install the detached macOS user agent." >&2
   exit 1
 fi
 
@@ -65,8 +77,8 @@ case "${DAEMON_VARIANT}" in
     ;;
   tauri)
     DAEMON_BINARY="${REPO_DIR}/daemon/target/release/secureintent-shadow-tauri"
-    if ! command -v pkg-config >/dev/null 2>&1 || \
-      ! pkg-config --exists javascriptcoregtk-4.1 webkit2gtk-4.1; then
+    if [[ "${PLATFORM}" != "Darwin" ]] && (! command -v pkg-config >/dev/null 2>&1 || \
+      ! pkg-config --exists javascriptcoregtk-4.1 webkit2gtk-4.1); then
       echo "The detached Tauri daemon requires Tauri v2's Linux development packages." >&2
       echo "Debian/Ubuntu/Kali: sudo apt install libwebkit2gtk-4.1-dev" >&2
       exit 1
@@ -89,8 +101,8 @@ for binary in "${BROKER_BINARY}" "${DAEMON_BINARY}"; do
   fi
   chmod 0755 "${binary}"
 done
-BROKER_BINARY="$(realpath "${BROKER_BINARY}")"
-DAEMON_BINARY="$(realpath "${DAEMON_BINARY}")"
+BROKER_BINARY="$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.argv[1]))' "${BROKER_BINARY}")"
+DAEMON_BINARY="$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.argv[1]))' "${DAEMON_BINARY}")"
 for binary in "${BROKER_BINARY}" "${DAEMON_BINARY}"; do
   if [[ "${binary}" != /* || ! -f "${binary}" || ! -x "${binary}" ]]; then
     echo "Rust executable must resolve to an absolute executable file: ${binary}" >&2
@@ -98,8 +110,8 @@ for binary in "${BROKER_BINARY}" "${DAEMON_BINARY}"; do
   fi
 done
 
-BROKER_SHA256="$(sha256sum "${BROKER_BINARY}" | awk '{print $1}')"
-DAEMON_SHA256="$(sha256sum "${DAEMON_BINARY}" | awk '{print $1}')"
+BROKER_SHA256="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "${BROKER_BINARY}")"
+DAEMON_SHA256="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "${DAEMON_BINARY}")"
 
 mkdir -p "${HOST_DIR}"
 chmod 0700 "${HOST_DIR}"
@@ -142,13 +154,27 @@ node -e '
   }
 ' "${HOST_MANIFEST}" "${BROKER_BINARY}" "${EXTENSION_ID}"
 
-MANIFEST_MODE="$(stat -c '%a' "${HOST_MANIFEST}")"
+MANIFEST_MODE="$(node -e 'process.stdout.write((require("node:fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "${HOST_MANIFEST}")"
 if [[ "${MANIFEST_MODE}" != "600" ]]; then
   echo "Native host manifest permissions must be 600; found ${MANIFEST_MODE}." >&2
   exit 1
 fi
 
-if [[ "${SERVICE_MODE}" != "ephemeral" ]]; then
+if [[ "${SERVICE_MODE}" != "ephemeral" && "${PLATFORM}" == "Darwin" ]]; then
+  mkdir -p "${LAUNCH_AGENTS_DIR}"
+  chmod 0700 "${LAUNCH_AGENTS_DIR}"
+  node -e '
+    const fs = require("node:fs"); const crypto = require("node:crypto");
+    const [path, daemon, socket] = process.argv.slice(1);
+    const esc = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("\x27", "&apos;");
+    const env = socket ? `<key>EnvironmentVariables</key><dict><key>SECUREINTENT_SHADOW_SOCKET</key><string>${esc(socket)}</string></dict>` : "";
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>com.secureintent.shadow</string><key>ProgramArguments</key><array><string>${esc(daemon)}</string></array>${env}<key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ProcessType</key><string>Background</string></dict></plist>\n`;
+    const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
+    try { fs.writeFileSync(temporary, plist, {flag:"wx", mode:0o600}); fs.chmodSync(temporary, 0o600); fs.renameSync(temporary, path); } finally { fs.rmSync(temporary, {force:true}); }
+  ' "${LAUNCH_PLIST}" "${DAEMON_BINARY}" "${SECUREINTENT_SHADOW_SOCKET:-}"
+fi
+
+if [[ "${SERVICE_MODE}" != "ephemeral" && "${PLATFORM}" != "Darwin" ]]; then
   mkdir -p "${SYSTEMD_USER_DIR}"
   node -e '
     const fs = require("node:fs");
@@ -201,7 +227,27 @@ if [[ "${SERVICE_MODE}" != "ephemeral" ]]; then
   ' "${SERVICE_FILE}" "${DAEMON_BINARY}" "${SECUREINTENT_SHADOW_SOCKET:-}"
 fi
 
-if [[ "${SERVICE_MODE}" == "install" ]]; then
+if [[ "${SERVICE_MODE}" == "install" && "${PLATFORM}" == "Darwin" ]]; then
+  LAUNCH_DOMAIN="gui/$(id -u)"
+  if ! BOOTOUT_OUTPUT="$(launchctl bootout "${LAUNCH_DOMAIN}/${LAUNCH_LABEL}" 2>&1)"; then
+    case "${BOOTOUT_OUTPUT}" in
+      *"No such process"*|*"Could not find service"*|*"not loaded"*) ;;
+      *)
+        echo "launchctl bootout failed for ${LAUNCH_LABEL}: ${BOOTOUT_OUTPUT}" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  launchctl bootstrap "${LAUNCH_DOMAIN}" "${LAUNCH_PLIST}"
+  launchctl kickstart -k "${LAUNCH_DOMAIN}/${LAUNCH_LABEL}"
+  ACTIVE_SOCKET="${SECUREINTENT_SHADOW_SOCKET:-${HOME}/Library/Caches/secureintent-shadow/daemon.sock}"
+  for _attempt in {1..50}; do [[ -S "${ACTIVE_SOCKET}" ]] && break; sleep 0.1; done
+  [[ -S "${ACTIVE_SOCKET}" ]] || { echo "Detached launchd daemon did not create socket: ${ACTIVE_SOCKET}" >&2; exit 1; }
+  ACTIVE_SOCKET_MODE="$(node -e 'process.stdout.write((require("node:fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "${ACTIVE_SOCKET}")"
+  [[ "${ACTIVE_SOCKET_MODE}" == "600" ]] || { echo "Daemon socket mode must be 600; found ${ACTIVE_SOCKET_MODE}." >&2; exit 1; }
+fi
+
+if [[ "${SERVICE_MODE}" == "install" && "${PLATFORM}" != "Darwin" ]]; then
   if [[ "${DAEMON_VARIANT}" == "tauri" ]]; then
     DISPLAY_ENVIRONMENT=()
     for variable_name in DISPLAY WAYLAND_DISPLAY XAUTHORITY; do
@@ -239,7 +285,7 @@ if [[ "${SERVICE_MODE}" == "install" ]]; then
     echo "Inspect it with: systemctl --user status ${SERVICE_NAME}" >&2
     exit 1
   fi
-  ACTIVE_SOCKET_MODE="$(stat -c '%a' "${ACTIVE_SOCKET}")"
+  ACTIVE_SOCKET_MODE="$(node -e 'process.stdout.write((require("node:fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "${ACTIVE_SOCKET}")"
   if [[ "${ACTIVE_SOCKET_MODE}" != "600" ]]; then
     echo "Detached daemon socket mode must be 600; found ${ACTIVE_SOCKET_MODE}." >&2
     exit 1
@@ -253,9 +299,13 @@ echo "Broker SHA-256: ${BROKER_SHA256}"
 echo "Daemon:         ${DAEMON_BINARY}"
 echo "Daemon SHA-256: ${DAEMON_SHA256}"
 if [[ "${SERVICE_MODE}" != "ephemeral" ]]; then
-  echo "User service:   ${SERVICE_FILE}"
+  echo "User service:   $([[ "${PLATFORM}" == "Darwin" ]] && echo "${LAUNCH_PLIST}" || echo "${SERVICE_FILE}")"
 fi
 if [[ "${SERVICE_MODE}" == "install" ]]; then
-  echo "Service state:  $(systemctl --user is-active "${SERVICE_NAME}")"
+  if [[ "${PLATFORM}" == "Darwin" ]]; then
+    echo "Service state:  launchd ${LAUNCH_LABEL}"
+  else
+    echo "Service state:  $(systemctl --user is-active "${SERVICE_NAME}")"
+  fi
 fi
 echo "Next: restart Chrome, reopen http://localhost:4173, and drop testdata/block.pem."
