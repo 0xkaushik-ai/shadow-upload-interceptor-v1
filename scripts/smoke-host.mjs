@@ -34,6 +34,7 @@ const messages = healthMode
         {
           type: 'scan_begin',
           id: scanId,
+          name: 'fixture',
           size: bytes.length,
           protocol,
         },

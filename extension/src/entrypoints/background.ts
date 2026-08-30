@@ -1,9 +1,18 @@
 import { browser, defineBackground } from '#imports';
-import { checkNativeHost } from '../bridge/nativeClient';
-import { type GuardHealthResult, originIsProtected, SUPPORTED_ORIGINS } from '../bridge/policy';
+import { checkNativeHost, scanWithNativeHost } from '../bridge/nativeClient';
+import {
+  type GuardHealthResult,
+  originIsProtected,
+  resolveScanOutcome,
+  SECURE_FALLBACK_POLICY,
+} from '../bridge/policy';
 import { loadGuardPolicy } from '../bridge/policyStore';
-import type { HealthCheckResult } from '../bridge/protocol';
-import { preflightScan, scanFile } from '../bridge/scanService';
+import {
+  type HealthCheckResult,
+  isScanFileRequest,
+  type ScanFileResult,
+  unavailableOutcome,
+} from '../bridge/protocol';
 
 function senderOrigin(url: string | undefined): string | null {
   if (!url) return null;
@@ -17,46 +26,72 @@ function senderOrigin(url: string | undefined): string | null {
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const messageType = (message as { type?: unknown })?.type;
-    if (!['scan-preflight', 'scan-file', 'health-check'].includes(String(messageType)))
-      return false;
+    if (messageType !== 'scan-file' && messageType !== 'health-check') return false;
 
-    const respond = (request: Promise<unknown>, fallback: unknown) => {
-      void request.then(sendResponse).catch(() => sendResponse(fallback));
+    if (messageType === 'health-check') {
+      const handleHealth = async (): Promise<GuardHealthResult> => {
+        const policy = await loadGuardPolicy();
+        const origin = senderOrigin(sender.url);
+        const protectedOrigin = origin !== null && originIsProtected(origin, policy);
+        if (!protectedOrigin) {
+          return {
+            available: false,
+            protocol: null,
+            protected: false,
+            policy,
+            reason: 'invalid_request',
+          };
+        }
+        const health: HealthCheckResult = await checkNativeHost(crypto.randomUUID());
+        return { ...health, protected: true, policy };
+      };
+
+      void handleHealth()
+        .then(sendResponse)
+        .catch(() =>
+          sendResponse({
+            available: false,
+            protocol: null,
+            protected: true,
+            policy: SECURE_FALLBACK_POLICY,
+            reason: 'host_unavailable',
+          } satisfies GuardHealthResult),
+        );
       return true;
-    };
-
-    if (messageType === 'scan-preflight') {
-      return respond(preflightScan(message, sender.url), {
-        kind: 'final',
-        result: { decision: 'block', cause: { kind: 'policy', reason: 'invalid_request' } },
-      });
     }
-    if (messageType === 'scan-file')
-      return respond(scanFile(message, sender.url), {
-        decision: 'block',
-        cause: { kind: 'policy', reason: 'invalid_request' },
-      });
 
-    const health = async (): Promise<GuardHealthResult> => {
+    const handle = async (): Promise<ScanFileResult> => {
       const policy = await loadGuardPolicy();
       const origin = senderOrigin(sender.url);
-      const buildTimeOrigin = origin !== null && SUPPORTED_ORIGINS.includes(origin as never);
-      if (!buildTimeOrigin || !originIsProtected(origin, policy)) {
-        return {
-          available: false,
-          protocol: null,
-          protected: false,
-          reason: 'invalid_request',
-        };
+      if (origin === null || !originIsProtected(origin, policy)) {
+        return resolveScanOutcome(unavailableOutcome('invalid_request'), SECURE_FALLBACK_POLICY);
       }
-      const native: HealthCheckResult = await checkNativeHost(crypto.randomUUID());
-      return { ...native, protected: true };
+      if (!isScanFileRequest(message)) {
+        return resolveScanOutcome(unavailableOutcome('invalid_request'), policy);
+      }
+
+      try {
+        if (message.size !== message.bytes.byteLength) {
+          return resolveScanOutcome(unavailableOutcome('invalid_request'), policy);
+        }
+        if (message.size > policy.maxFileBytes) {
+          return resolveScanOutcome(unavailableOutcome('too_large'), policy);
+        }
+        const outcome = await scanWithNativeHost(message, policy.scanTimeoutMs);
+        return resolveScanOutcome(outcome, policy);
+      } finally {
+        // Best-effort scrubbing of the worker's structured-clone allocation.
+        message.bytes.fill(0);
+      }
     };
-    return respond(health(), {
-      available: false,
-      protocol: null,
-      protected: true,
-      reason: 'host_unavailable',
-    } satisfies GuardHealthResult);
+
+    void handle()
+      .then(sendResponse)
+      .catch(() =>
+        sendResponse(
+          resolveScanOutcome(unavailableOutcome('host_unavailable'), SECURE_FALLBACK_POLICY),
+        ),
+      );
+    return true;
   });
 });

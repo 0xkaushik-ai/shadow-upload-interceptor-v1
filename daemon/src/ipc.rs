@@ -16,7 +16,7 @@ const SOCKET_FILENAME: &str = "daemon.sock";
 
 #[derive(Debug, Error)]
 pub enum IpcError {
-    #[error("a secure runtime directory is unavailable; cannot create a private daemon socket")]
+    #[error("XDG_RUNTIME_DIR is unavailable; cannot create a private daemon socket")]
     MissingRuntimeDirectory,
     #[error("daemon socket path must be absolute and have a parent directory")]
     InvalidSocketPath,
@@ -65,22 +65,11 @@ fn peer_uid(fd: RawFd) -> Result<u32, IpcError> {
     Ok(credentials.uid)
 }
 
-#[cfg(target_os = "macos")]
-fn peer_uid(fd: RawFd) -> Result<u32, IpcError> {
-    let mut uid: libc::uid_t = 0;
-    let mut gid: libc::gid_t = 0;
-    // SAFETY: fd is an open Unix socket and getpeereid initializes the supplied uid/gid storage.
-    if unsafe { libc::getpeereid(fd, &mut uid, &mut gid) } != 0 {
-        return Err(IpcError::Io(io::Error::last_os_error()));
-    }
-    Ok(uid)
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(target_os = "linux"))]
 fn peer_uid(_fd: RawFd) -> Result<u32, IpcError> {
     Err(IpcError::Io(io::Error::new(
         io::ErrorKind::Unsupported,
-        "peer credential verification is implemented only for Linux and macOS",
+        "peer credential verification is currently implemented for Linux only",
     )))
 }
 
@@ -99,31 +88,12 @@ pub fn socket_path() -> Result<PathBuf, IpcError> {
         return Ok(PathBuf::from(configured));
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        let runtime_directory = env::var_os("XDG_RUNTIME_DIR")
-            .filter(|value| !value.is_empty())
-            .ok_or(IpcError::MissingRuntimeDirectory)?;
-        Ok(PathBuf::from(runtime_directory)
-            .join(SOCKET_DIRECTORY_NAME)
-            .join(SOCKET_FILENAME))
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // Caches is per-user on supported macOS installations.  We create and validate the final
-        // 0700 directory below; unlike /tmp, this base is not a shared sticky directory.
-        let home = env::var_os("HOME")
-            .filter(|value| !value.is_empty())
-            .ok_or(IpcError::MissingRuntimeDirectory)?;
-        Ok(PathBuf::from(home)
-            .join("Library/Caches")
-            .join(SOCKET_DIRECTORY_NAME)
-            .join(SOCKET_FILENAME))
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    Err(IpcError::MissingRuntimeDirectory)
+    let runtime_directory = env::var_os("XDG_RUNTIME_DIR")
+        .filter(|value| !value.is_empty())
+        .ok_or(IpcError::MissingRuntimeDirectory)?;
+    Ok(PathBuf::from(runtime_directory)
+        .join(SOCKET_DIRECTORY_NAME)
+        .join(SOCKET_FILENAME))
 }
 
 fn socket_parent(path: &Path) -> Result<&Path, IpcError> {

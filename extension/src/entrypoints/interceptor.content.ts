@@ -5,7 +5,6 @@ import { installUploadGuard } from '../intercept/uploadGuard';
 export default defineContentScript({
   matches: [...CONTENT_SCRIPT_MATCHES],
   runAt: 'document_start',
-  allFrames: true,
   main(ctx) {
     const remove = installUploadGuard();
     ctx.onInvalidated(remove);
