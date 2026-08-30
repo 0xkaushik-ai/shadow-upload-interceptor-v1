@@ -1,0 +1,7 @@
+{
+  "name": "com.secureintent.shadow",
+  "description": "SecureIntent Shadow Upload native scanner",
+  "path": "/ABSOLUTE/PATH/TO/secureintent-shadow-host",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://EXTENSION_ID/"]
+}

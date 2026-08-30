@@ -1,0 +1,91 @@
+name: Part 1 verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extension-and-native-host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Verify extension
+        run: |
+          pnpm --dir extension install --frozen-lockfile
+          pnpm --dir extension lint
+          pnpm --dir extension compile
+          pnpm --dir extension test
+          pnpm --dir extension build
+
+      - name: Install the E2E browser
+        run: pnpm --dir extension exec playwright install --with-deps chromium
+
+      - name: Verify broker and detached Rust daemon
+        run: |
+          cargo fmt --manifest-path daemon/Cargo.toml --check
+          cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path daemon/Cargo.toml
+          cargo build --manifest-path daemon/Cargo.toml \
+            --bin secureintent-shadow-host --bin secureintent-shadow-daemon
+          node scripts/smoke-detached.mjs
+
+      - name: Verify install, diagnostics, and uninstall in isolation
+        run: ./scripts/test-install.sh "${{ runner.temp }}/secureintent-native-host-test"
+
+      - name: Exercise the real Chromium extension-to-Rust loop
+        run: pnpm --dir extension e2e
+
+  detached-tauri-daemon:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install Tauri v2 Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev xauth xvfb
+
+      - name: Build and exercise the detached zero-window Tauri daemon
+        run: |
+          cargo clippy --manifest-path daemon/Cargo.toml \
+            --features tauri-host --bin secureintent-shadow-tauri -- -D warnings
+          cargo build --manifest-path daemon/Cargo.toml \
+            --features tauri-host --bin secureintent-shadow-tauri
+          cargo build --manifest-path daemon/Cargo.toml --bin secureintent-shadow-host
+          xvfb-run -a env \
+            SHADOW_DAEMON_BINARY=daemon/target/debug/secureintent-shadow-tauri \
+            node scripts/smoke-detached.mjs
+
+      - name: Exercise Chromium through the detached Tauri v2 daemon
+        run: |
+          pnpm --dir extension install --frozen-lockfile
+          pnpm --dir extension build
+          pnpm --dir extension exec playwright install --with-deps chromium
+          xvfb-run -a env \
+            SHADOW_E2E_DAEMON_BINARY=daemon/target/debug/secureintent-shadow-tauri \
+            pnpm --dir extension e2e

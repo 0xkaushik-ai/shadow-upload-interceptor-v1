@@ -1,0 +1,13 @@
+node_modules/
+.output/
+.wxt/
+dist/
+target/
+daemon/gen/
+*.log
+.DS_Store
+native-host/com.secureintent.shadow.json
+extension/playwright-report/
+extension/test-results/
+extension/package-lock.json
+testdata/01.txt

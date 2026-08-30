@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Forge file upload destination for the SecureIntent demo" />
+    <title>Forge — Debug with context</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand" aria-label="Forge">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M12 2.75 20 7.4v9.2l-8 4.65-8-4.65V7.4L12 2.75Z" />
+              <path d="m8.6 12 2.15 2.2 4.75-4.85" />
+            </svg>
+          </span>
+          <span>Forge</span>
+          <span class="brand-beta">AI</span>
+        </div>
+        <span class="session-label">
+          <span aria-hidden="true"></span>
+          Private workspace
+        </span>
+      </header>
+
+      <section class="workspace" aria-labelledby="page-title">
+        <div class="intro">
+          <span class="eyebrow">New debugging session</span>
+          <h1 id="page-title">Add context for your assistant</h1>
+          <p>
+            Attach a source file, configuration, or log. It will be checked locally before Forge
+            can receive it.
+          </p>
+        </div>
+
+        <label
+          id="forge-drop-zone"
+          class="drop-zone"
+          data-state="waiting"
+          for="forge-file-input"
+          tabindex="0"
+          aria-describedby="upload-guidance"
+        >
+          <div class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 15V4m0 0L8 8m4-4 4 4" />
+              <path d="M5 14v4.25A1.75 1.75 0 0 0 6.75 20h10.5A1.75 1.75 0 0 0 19 18.25V14" />
+            </svg>
+          </div>
+          <div class="drop-copy">
+            <strong>Drop a file here</strong>
+            <span id="upload-guidance">or click anywhere to choose one</span>
+            <span class="upload-meta">
+              <span>One file</span>
+              <span aria-hidden="true">·</span>
+              <span>Up to 8 MiB</span>
+              <span aria-hidden="true">·</span>
+              <span>Scanned on this device</span>
+            </span>
+          </div>
+          <span class="choose-button" aria-hidden="true">
+            Choose file
+            <svg viewBox="0 0 16 16">
+              <path d="m6 3 5 5-5 5" />
+            </svg>
+          </span>
+          <input id="forge-file-input" data-forge-upload type="file" />
+        </label>
+
+        <div class="status-card" data-status="waiting" aria-live="polite" aria-atomic="true">
+          <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+          <div>
+            <span class="status-kicker">SecureIntent local guard</span>
+            <strong id="status-title">Waiting for a file</strong>
+            <span id="status-detail">Nothing has been shared with Forge.</span>
+          </div>
+        </div>
+
+        <div id="received-file" class="received-file" hidden>
+          <span class="file-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M7 3h7l4 4v14H7V3Z" />
+              <path d="M14 3v5h5" />
+            </svg>
+          </span>
+          <div>
+            <strong id="received-name"></strong>
+            <span id="received-size"></span>
+          </div>
+          <span class="received-badge">Attached</span>
+        </div>
+      </section>
+
+      <p class="privacy-note">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7.5 10V7.5a4.5 4.5 0 0 1 9 0V10M6 10h12v10H6V10Z" />
+        </svg>
+        SecureIntent checks locally — file contents are never uploaded for scanning
+      </p>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

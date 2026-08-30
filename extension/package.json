@@ -1,0 +1,34 @@
+{
+  "name": "secureintent-shadow-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wxt -b chrome",
+    "build": "wxt build -b chrome",
+    "compile": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "playwright test --config playwright.config.ts",
+    "e2e:headed": "SHADOW_E2E_HEADED=1 playwright test --config playwright.config.ts",
+    "lint": "biome check src e2e wxt.config.ts vitest.config.ts playwright.config.ts",
+    "format": "biome format --write .",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@biomejs/biome": "2.5.10",
+    "@testing-library/dom": "^10.4.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@wxt-dev/module-react": "^1.1.5",
+    "jsdom": "^29.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.7",
+    "wxt": "^0.20.26"
+  },
+  "packageManager": "pnpm@10.28.2"
+}
