@@ -48,8 +48,8 @@ internal warning UI, and removing the host element cannot recover a file that wa
 
 ## Prerequisites
 
-- Google Chrome 148+ for manual loading; Chrome for Testing or Chromium 148+ for `run-demo.sh`
-- Node.js 22 or newer (`run-demo.sh` uses pnpm 10 from `PATH` or bootstraps it through `npx`)
+- Google Chrome 148+ for manual loading; Chrome for Testing or Chromium 148+ for `run-linux.sh`
+- Node.js 22 or newer (`run-linux.sh` uses pnpm 10 from `PATH` or bootstraps it through `npx`)
 - Rust 1.85 or newer
 - A Linux systemd user session for persistent manual installation
 - Tauri path only: Tauri v2 Linux packages, including `libwebkit2gtk-4.1-dev`
@@ -66,11 +66,11 @@ install its native dependency once and run:
 ```bash
 sudo apt-get update
 sudo apt-get install -y libwebkit2gtk-4.1-dev
-chmod +x run-demo.sh
-./run-demo.sh --tauri-daemon
+./run-linux.sh
 ```
 
-The launcher installs pnpm dependencies, builds the WXT extension, builds and registers the Rust
+The Linux launcher validates Node, Rust, and Tauri's WebKit packages, then installs pnpm
+dependencies, builds the WXT extension, builds and registers the Rust
 broker and zero-window Tauri daemon, serves Forge on port 4173, and opens a fresh temporary Chrome
 for Testing or Chromium profile with the unpacked extension loaded. The Native Messaging manifest
 registers only the small broker; the separate Tauri process owns the private listener and scan loop.
@@ -96,7 +96,7 @@ private signing key. A production build would obtain its stable identity from th
 or enterprise-managed deployment.
 
 To build and register the Tauri variant without opening Chrome, use
-`./run-demo.sh --prepare-only --tauri-daemon`.
+`./run-linux.sh --prepare-only`.
 
 ## Manual setup
 

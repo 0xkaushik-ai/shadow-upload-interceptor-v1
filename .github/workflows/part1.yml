@@ -33,6 +33,11 @@ jobs:
           pnpm --dir extension test
           pnpm --dir extension build
 
+      - name: Verify Linux launcher
+        run: |
+          bash -n run-linux.sh run-demo.sh scripts/*.sh
+          ./run-linux.sh --help
+
       - name: Install the E2E browser
         run: pnpm --dir extension exec playwright install --with-deps chromium
 
