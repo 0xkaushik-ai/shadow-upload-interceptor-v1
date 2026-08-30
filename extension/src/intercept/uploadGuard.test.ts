@@ -95,14 +95,61 @@ beforeEach(() => {
   document.body.replaceChildren();
   delete document.documentElement.dataset.secureintentGuard;
   delete document.documentElement.dataset.secureintentStatus;
+  document.querySelector('secureintent-daemon-status')?.remove();
 });
 
 afterEach(() => {
   document.querySelector('secureintent-shadow-warning')?.remove();
+  document.querySelector('secureintent-daemon-status')?.remove();
   vi.unstubAllGlobals();
 });
 
 describe('upload guard', () => {
+  test('shows online, offline, and restored daemon health without a reload', async () => {
+    vi.useFakeTimers();
+    const requestHealth = vi
+      .fn<() => Promise<GuardHealthResult>>()
+      .mockResolvedValue(health())
+      .mockResolvedValueOnce(health())
+      .mockResolvedValueOnce(
+        health({ available: false, protocol: null, reason: 'host_disconnected' }),
+      )
+      .mockResolvedValueOnce(health());
+    const remove = installUploadGuard({
+      requestHealth,
+      requestScan: async () => ({ decision: 'allow', rule: null, failOpen: false }),
+      healthPollIntervalMs: 1_000,
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(document.querySelector('secureintent-daemon-status')?.getAttribute('data-state')).toBe(
+        'online',
+      );
+      expect(document.documentElement.dataset.secureintentGuard).toBe('active');
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(document.querySelector('secureintent-daemon-status')?.getAttribute('data-state')).toBe(
+        'offline',
+      );
+      expect(document.documentElement.dataset.secureintentGuard).toBe('degraded');
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(document.querySelector('secureintent-daemon-status')?.getAttribute('data-state')).toBe(
+        'restored',
+      );
+      expect(document.documentElement.dataset.secureintentGuard).toBe('active');
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(document.querySelector('secureintent-daemon-status')?.getAttribute('data-state')).toBe(
+        'online',
+      );
+    } finally {
+      remove();
+      vi.useRealTimers();
+    }
+  });
+
   test('synchronously stops an ordinary dynamic file input and resumes only after Allow', async () => {
     const { input, setFiles } = createControlledInput();
     const file = new File(['safe'], 'allow.txt', { type: 'text/plain' });
@@ -127,12 +174,18 @@ describe('upload guard', () => {
     expect(JSON.parse(document.documentElement.dataset.secureintentStatus ?? '{}')).toEqual({
       state: 'scanning',
     });
+    expect(document.querySelector('secureintent-daemon-status')?.getAttribute('data-state')).toBe(
+      'scanning',
+    );
 
     decision.resolve({ decision: 'allow', rule: null, failOpen: false });
     await flush();
 
     expect(pageListener).toHaveBeenCalledOnce();
     expect(input.files?.[0]).toBe(file);
+    expect(document.querySelector('secureintent-daemon-status')?.getAttribute('data-state')).toBe(
+      'online',
+    );
     remove();
   });
 

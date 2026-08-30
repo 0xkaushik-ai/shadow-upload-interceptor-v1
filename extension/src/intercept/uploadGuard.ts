@@ -11,6 +11,8 @@ import {
   type ScanFileResult,
   unavailableOutcome,
 } from '../bridge/protocol';
+import type { DaemonStatusState } from '../overlay/DaemonStatus';
+import { mountDaemonStatus } from '../overlay/mountDaemonStatus';
 import { mountUploadOverlay } from '../overlay/mountUploadOverlay';
 import type { UploadBlockCause } from '../overlay/UploadBlocked';
 import { resumeIntoInput } from './resumeUpload';
@@ -18,6 +20,8 @@ import { resumeIntoInput } from './resumeUpload';
 const FILE_INPUT_SELECTOR = 'input[type="file"]';
 const CONTENT_TIMEOUT_GRACE_MS = 1_000;
 const CONTENT_HEALTH_TIMEOUT_MS = 2_000;
+const HEALTH_POLL_INTERVAL_MS = 10_000;
+const RESTORED_DISPLAY_MS = 3_000;
 let warnedFailOpen = false;
 
 interface DemoStatus {
@@ -28,6 +32,7 @@ export interface UploadGuardOptions {
   requestHealth?: () => Promise<GuardHealthResult>;
   requestScan?: (file: File, policy: GuardPolicy) => Promise<ScanFileResult>;
   isTrustedEvent?: (event: Event) => boolean;
+  healthPollIntervalMs?: number;
 }
 
 function notifyPage(status: DemoStatus): void {
@@ -130,38 +135,87 @@ export function installUploadGuard(options: UploadGuardOptions = {}): () => void
   const checkHealth = options.requestHealth ?? requestHealth;
   const scanFile = options.requestScan ?? requestScan;
   const isTrustedEvent = options.isTrustedEvent ?? ((event: Event) => event.isTrusted);
+  const healthPollIntervalMs = options.healthPollIntervalMs ?? HEALTH_POLL_INTERVAL_MS;
 
   let generation = 0;
   let installed = true;
   let protectionEnabled = true;
   let policy = SECURE_FALLBACK_POLICY;
+  let healthInFlight = false;
+  let scanning = false;
+  let lastAvailable: boolean | null = null;
+  let restoredTimer: ReturnType<typeof setTimeout> | null = null;
   let removeOverlay: (() => void) | null = null;
+  const daemonStatus = mountDaemonStatus('checking', policy.onUnavailable);
   document.documentElement.dataset.secureintentGuard = 'checking';
 
-  const healthGeneration = generation;
-  void checkHealth()
-    .then((health) => {
-      if (!installed) return;
-      policy = health.policy;
-      protectionEnabled = health.protected && originIsProtected(location.origin, policy);
-      if (!protectionEnabled) {
-        delete document.documentElement.dataset.secureintentGuard;
-        return;
-      }
-      if (generation === healthGeneration) {
-        document.documentElement.dataset.secureintentGuard = health.available
-          ? 'active'
-          : 'degraded';
-      }
-    })
-    .catch(() => {
-      if (!installed || generation !== healthGeneration) return;
-      document.documentElement.dataset.secureintentGuard = 'degraded';
-    });
+  const setDaemonStatus = (state: DaemonStatusState) => {
+    if (!installed || !protectionEnabled) return;
+    daemonStatus.update(state, policy.onUnavailable);
+  };
+
+  const showAvailable = () => {
+    const restored = lastAvailable === false;
+    lastAvailable = true;
+    document.documentElement.dataset.secureintentGuard = 'active';
+    if (scanning) return;
+    if (restored) {
+      setDaemonStatus('restored');
+      if (restoredTimer) clearTimeout(restoredTimer);
+      restoredTimer = setTimeout(() => {
+        restoredTimer = null;
+        if (installed && !scanning && lastAvailable) setDaemonStatus('online');
+      }, RESTORED_DISPLAY_MS);
+      return;
+    }
+    setDaemonStatus('online');
+  };
+
+  const showUnavailable = () => {
+    lastAvailable = false;
+    document.documentElement.dataset.secureintentGuard = 'degraded';
+    if (!scanning) setDaemonStatus('offline');
+  };
+
+  const applyHealth = (health: GuardHealthResult) => {
+    policy = health.policy;
+    protectionEnabled = health.protected && originIsProtected(location.origin, policy);
+    if (!protectionEnabled) {
+      delete document.documentElement.dataset.secureintentGuard;
+      daemonStatus.remove();
+      return;
+    }
+    if (health.available) showAvailable();
+    else showUnavailable();
+  };
+
+  const refreshHealth = async () => {
+    if (!installed || !protectionEnabled || healthInFlight) return;
+    healthInFlight = true;
+    try {
+      applyHealth(await checkHealth());
+    } catch {
+      showUnavailable();
+    } finally {
+      healthInFlight = false;
+    }
+  };
+
+  void refreshHealth();
+  const healthPoll = setInterval(() => {
+    if (document.visibilityState !== 'hidden') void refreshHealth();
+  }, healthPollIntervalMs);
+  const refreshWhenVisible = () => {
+    if (document.visibilityState !== 'hidden') void refreshHealth();
+  };
+  window.addEventListener('focus', refreshWhenVisible);
+  document.addEventListener('visibilitychange', refreshWhenVisible);
 
   const processFile = async (file: File, input: HTMLInputElement, ownGeneration: number) => {
     removeOverlay?.();
     removeOverlay = null;
+    scanning = true;
+    setDaemonStatus('scanning');
     notifyPage({ state: 'scanning' });
 
     let result: ScanFileResult;
@@ -171,12 +225,13 @@ export function installUploadGuard(options: UploadGuardOptions = {}): () => void
       result = fallbackResult('host_unavailable', policy);
     }
     if (!installed || generation !== ownGeneration) return;
+    scanning = false;
 
-    if (result.reason && result.reason !== 'too_large') {
-      document.documentElement.dataset.secureintentGuard = 'degraded';
-    } else {
-      document.documentElement.dataset.secureintentGuard = 'active';
-    }
+    if (result.reason && result.reason !== 'too_large') showUnavailable();
+    else if (!result.reason) showAvailable();
+    else if (lastAvailable === false) setDaemonStatus('offline');
+    else if (lastAvailable === true) setDaemonStatus('online');
+    else setDaemonStatus('checking');
 
     if (result.decision === 'block') {
       notifyPage({ state: 'blocked' });
@@ -254,9 +309,14 @@ export function installUploadGuard(options: UploadGuardOptions = {}): () => void
   return () => {
     installed = false;
     generation += 1;
+    clearInterval(healthPoll);
+    if (restoredTimer) clearTimeout(restoredTimer);
     removeOverlay?.();
+    daemonStatus.remove();
     delete document.documentElement.dataset.secureintentGuard;
     delete document.documentElement.dataset.secureintentStatus;
+    window.removeEventListener('focus', refreshWhenVisible);
+    document.removeEventListener('visibilitychange', refreshWhenVisible);
     window.removeEventListener('change', onChange, true);
     window.removeEventListener('dragover', onDragOver, true);
     window.removeEventListener('drop', onDrop, true);

@@ -36,15 +36,23 @@ private Unix listener remain alive. No file bytes are sent to a cloud service.
 4. Drop [`testdata/oversized-8mb.txt`](testdata/oversized-8mb.txt). Its logical size is exactly
    8 MiB + 1 byte, so the bundled policy blocks it without sending it to the daemon.
 5. Stop the printed daemon PID (ephemeral demo) or the user service (manual installation), then try
-   again. The bundled fail-closed policy blocks after a bounded health-check failure instead of
-   releasing unscanned bytes.
+   again. The extension-owned status changes to **Local scanner offline**, and the bundled
+   fail-closed policy blocks instead of releasing unscanned bytes. Restart the daemon and the
+   status automatically reports **Local scanner restored** without reloading Forge.
 
 Decisions come from bytes, never extensions: [`testdata/renamed-secret.txt`](testdata/renamed-secret.txt)
 still blocks, while the browser suite proves that harmless bytes renamed `private-key.pem` are
 allowed.
 
-The warning is rendered by the extension in a closed Shadow DOM. The page cannot inspect its
-internal warning UI, and removing the host element cannot recover a file that was already blocked.
+The warning and live daemon-status card are rendered by the extension in separate closed Shadow
+DOM roots. The card reports checking, online, scanning, offline, and restored states. Health checks
+run while the tab is visible and on focus; hidden tabs do not continuously launch health brokers.
+The page cannot inspect either component's internal UI, and removing a host element cannot recover
+a file that was already blocked.
+
+When the daemon is unavailable, the warning explains that fail-closed policy blocked the upload and
+asks the user to start or restart the daemon before selecting the file again. A secret finding uses
+different copy, so scanner outages are never presented as detected credentials.
 
 ## Prerequisites
 
@@ -208,7 +216,7 @@ policy parsing and enforcement, native-client failures and timeouts, synchronous
 stale responses, removed inputs, drop routing, DOM metadata minimization, and `FileList`
 reconstruction. A reviewer does not need GTK or WebKit to run the default equivalent daemon core.
 
-The last verified local run completed 29 Rust unit tests, 25 extension unit tests, and 6 real-browser
+The last verified local run completed 29 Rust unit tests, 29 extension unit tests, and 7 real-browser
 tests. The Tauri lifecycle smoke also proved that one PID survives malformed IPC and three separate
 Native Messaging broker sessions.
 

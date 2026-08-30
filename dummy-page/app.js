@@ -100,7 +100,7 @@ function applyGuardState() {
     setStatus(
       'unavailable',
       'Local scanner unavailable',
-      'Files will continue without scanning until the local service reconnects.',
+      'Uploads are blocked until the local scanner daemon reconnects.',
     );
   }
 }
