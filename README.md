@@ -174,6 +174,16 @@ validated after installation. Diagnose or remove the complete broker/service reg
 ./scripts/uninstall-host.sh chrome
 ```
 
+If the extension card reports **Local scanner offline**, restore the installed Linux service with:
+
+```bash
+systemctl --user restart com.secureintent.shadow.service
+```
+
+Keep Forge visible while it reconnects. The status changes through **Local scanner restored** to
+**Local scanner online** without a page reload; select the file again only after protection is
+active.
+
 `doctor.sh` checks the manifest, broker, service, socket permissions, and service PID; then it runs
 Health, Block, and Allow through three separate brokers and confirms that the daemon PID survived.
 Uninstall disables/removes the service, manifest, and stale socket. Built binaries remain intact.
