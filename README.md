@@ -1,5 +1,8 @@
 # SecureIntent — Shadow Upload Interceptor for macOS
 
+This README applies only to the macOS implementation on
+`shadow-upload-interceptor-macos-version` and the `macos-part1-v1.0.0` release line.
+
 **Files are inspected locally before release. The detached daemon returns only Block or Allow, and
 policy decides what happens when scanning is unavailable.**
 
@@ -9,9 +12,8 @@ Messaging broker, and an independently managed Rust scanner daemon. The assessed
 zero-window Tauri v2 executable managed by `launchd`. Chrome can exit while that daemon PID and its
 private Unix listener remain alive. No file bytes are sent to a cloud service.
 
-Use the `shadow-upload-interceptor-macos-version` branch for macOS development. Immutable v1.0.0
-sources are tagged `macos-part1-v1.0.0`; Linux development remains on `main`, with its release
-tagged `linux-part1-v1.0.0`.
+Use `shadow-upload-interceptor-macos-version` for macOS development. Immutable v1.0.0 sources are
+tagged `macos-part1-v1.0.0`.
 
 ## Part 1 requirement coverage
 
@@ -75,7 +77,8 @@ Start from the immutable macOS v1.0.0 release:
 
 ```bash
 git clone --branch macos-part1-v1.0.0 \
-  https://github.com/0xkaushik-ai/shadow-upload-interceptor-v1.git
+  https://github.com/0xkaushik-ai/shadow-upload-interceptor-v1.git \
+  shadow-upload-interceptor
 cd shadow-upload-interceptor
 ```
 
@@ -110,9 +113,9 @@ are respected. Manual installation uses a persistent `launchd` user agent. The d
 substitutes the standalone Rust daemon for the assessed Tauri executable; pass `--tauri-daemon` for
 the official Part 1 path.
 
-On macOS, `./run-macos.sh` is a small wrapper that finds Chrome for Testing or Chromium in the
-standard application and Playwright-cache paths, checks version 148+, then delegates to
-`run-demo.sh` and its pinned pnpm selection. Set `DEMO_CHROME_BIN` to override discovery.
+On macOS, `./run-macos.sh` finds Chrome for Testing or Chromium in the standard application and
+Playwright-cache paths, checks version 148+, then runs the shared launcher with its pinned pnpm
+selection. Set `DEMO_CHROME_BIN` to override discovery.
 
 Because Chrome resolves user-level Native Messaging hosts relative to an overridden user-data
 directory, the launcher installs a pinned host manifest inside its disposable profile. Manual setup
@@ -172,7 +175,8 @@ needed.
 
 ```bash
 git clone --branch macos-part1-v1.0.0 \
-  https://github.com/0xkaushik-ai/shadow-upload-interceptor-v1.git
+  https://github.com/0xkaushik-ai/shadow-upload-interceptor-v1.git \
+  shadow-upload-interceptor
 cd shadow-upload-interceptor
 chmod +x run-macos.sh scripts/*.sh
 npx --yes pnpm@10.28.2 --dir extension install --frozen-lockfile
