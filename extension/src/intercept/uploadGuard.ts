@@ -1,11 +1,13 @@
 import { browser } from 'wxt/browser';
-import type { GuardHealthResult } from '../bridge/policy';
+import type { FailureAction, GuardHealthResult } from '../bridge/policy';
 import {
   isScanFileResult,
   type ScanFailureReason,
   type ScanFileResult,
   type ScanPreflightResult,
 } from '../bridge/protocol';
+import type { DaemonStatusState } from '../overlay/DaemonStatus';
+import { mountDaemonStatus } from '../overlay/mountDaemonStatus';
 import { mountUploadOverlay } from '../overlay/mountUploadOverlay';
 import type { UploadBlockCause } from '../overlay/UploadBlocked';
 import { resumeIntoInput } from './resumeUpload';
@@ -15,6 +17,8 @@ const CONTENT_HEALTH_TIMEOUT_MS = 2_000;
 // The content script has no policy copy. This fixed outer deadline only prevents a wedged worker
 // from retaining page bytes forever, and always resolves fail-closed.
 const CONTENT_SCAN_TIMEOUT_MS = 12_000;
+const HEALTH_POLL_INTERVAL_MS = 10_000;
+const RESTORED_DISPLAY_MS = 3_000;
 
 interface DemoStatus {
   state: 'scanning' | 'allowed' | 'blocked' | 'canceled';
@@ -22,6 +26,7 @@ interface DemoStatus {
 
 interface InputOperation {
   suppressFollowingChange: boolean;
+  scanning: boolean;
   removeOverlay: (() => void) | null;
 }
 
@@ -29,6 +34,7 @@ export interface UploadGuardOptions {
   requestHealth?: () => Promise<GuardHealthResult>;
   requestScan?: (file: File) => Promise<ScanFileResult>;
   isTrustedEvent?: (event: Event) => boolean;
+  healthPollIntervalMs?: number;
 }
 
 function notifyPage(status: DemoStatus): void {
@@ -119,52 +125,134 @@ export function installUploadGuard(options: UploadGuardOptions = {}): () => void
   const activeOperations = new Set<InputOperation>();
   let unresolvedDropOverlay: (() => void) | null = null;
   let installed = true;
+  const healthPollIntervalMs = options.healthPollIntervalMs ?? HEALTH_POLL_INTERVAL_MS;
+  let healthInFlight = false;
+  let scanningCount = 0;
+  let lastAvailable: boolean | null = null;
+  let onUnavailable: FailureAction = 'block';
+  let statusMounted = true;
+  let restoredTimer: ReturnType<typeof setTimeout> | null = null;
+  const daemonStatus = mountDaemonStatus('checking', onUnavailable);
   document.documentElement.dataset.secureintentGuard = 'checking';
+
+  const setDaemonStatus = (state: DaemonStatusState) => {
+    if (!installed || !statusMounted) return;
+    daemonStatus.update(state, onUnavailable);
+  };
+
+  const showAvailable = () => {
+    const restored = lastAvailable === false;
+    lastAvailable = true;
+    document.documentElement.dataset.secureintentGuard = 'active';
+    if (scanningCount > 0) return;
+    if (restored) {
+      setDaemonStatus('restored');
+      if (restoredTimer) clearTimeout(restoredTimer);
+      restoredTimer = setTimeout(() => {
+        restoredTimer = null;
+        if (installed && scanningCount === 0 && lastAvailable) setDaemonStatus('online');
+      }, RESTORED_DISPLAY_MS);
+      return;
+    }
+    setDaemonStatus('online');
+  };
+
+  const showUnavailable = () => {
+    lastAvailable = false;
+    document.documentElement.dataset.secureintentGuard = 'degraded';
+    if (scanningCount === 0) setDaemonStatus('offline');
+  };
+
+  const applyHealth = (health: GuardHealthResult) => {
+    onUnavailable = health.onUnavailable;
+    if (!health.protected) {
+      delete document.documentElement.dataset.secureintentGuard;
+      daemonStatus.remove();
+      statusMounted = false;
+      return;
+    }
+    if (health.available) showAvailable();
+    else showUnavailable();
+  };
 
   const healthRequest =
     checkHealth ??
     (() => browser.runtime.sendMessage({ type: 'health-check' }) as Promise<GuardHealthResult>);
-  void settleWithTimeout(healthRequest(), CONTENT_HEALTH_TIMEOUT_MS, {
-    available: false,
-    protocol: null,
-    protected: true,
-    reason: 'timeout',
-  }).then((health) => {
-    if (!installed) return;
-    if (!health.protected) {
-      delete document.documentElement.dataset.secureintentGuard;
+  const refreshHealth = async () => {
+    if (!installed || !statusMounted || healthInFlight || scanningCount > 0) return;
+    healthInFlight = true;
+    try {
+      applyHealth(
+        await settleWithTimeout(healthRequest(), CONTENT_HEALTH_TIMEOUT_MS, {
+          available: false,
+          protocol: null,
+          protected: true,
+          onUnavailable: 'block',
+          reason: 'timeout',
+        }),
+      );
+    } finally {
+      healthInFlight = false;
+    }
+  };
+
+  void refreshHealth();
+  const healthPoll = setInterval(() => {
+    if (document.visibilityState !== 'hidden') void refreshHealth();
+  }, healthPollIntervalMs);
+  const refreshWhenVisible = () => {
+    if (document.visibilityState !== 'hidden') void refreshHealth();
+  };
+  window.addEventListener('focus', refreshWhenVisible);
+  document.addEventListener('visibilitychange', refreshWhenVisible);
+
+  const showKnownStatus = () => {
+    if (scanningCount > 0) return;
+    if (lastAvailable === true) setDaemonStatus('online');
+    else if (lastAvailable === false) setDaemonStatus('offline');
+    else setDaemonStatus('checking');
+  };
+
+  const applyScanHealth = (result: ScanFileResult) => {
+    if (result.decision === 'allow') {
+      if (result.source === 'scanner') showAvailable();
+      else if (result.source === 'policy' && result.reason !== 'too_large') showUnavailable();
+      else showKnownStatus();
       return;
     }
-    document.documentElement.dataset.secureintentGuard = health.available ? 'active' : 'degraded';
-  });
+    if (result.cause.kind === 'rule') showAvailable();
+    else if (result.cause.reason === 'too_large') showKnownStatus();
+    else showUnavailable();
+  };
 
   const start = (file: File, input: HTMLInputElement, suppressFollowingChange: boolean) => {
     const previous = operations.get(input);
     previous?.removeOverlay?.();
+    if (previous?.scanning) scanningCount -= 1;
     if (previous) activeOperations.delete(previous);
     const operation: InputOperation = {
       suppressFollowingChange,
+      scanning: true,
       removeOverlay: null,
     };
     operations.set(input, operation);
     activeOperations.add(operation);
+    scanningCount += 1;
+    setDaemonStatus('scanning');
     notifyPage({ state: 'scanning' });
 
     void settleWithTimeout(scanFile(file), CONTENT_SCAN_TIMEOUT_MS, failClosed('timeout')).then(
       (result) => {
         if (!installed || operations.get(input) !== operation) return;
+        operation.scanning = false;
+        scanningCount = Math.max(0, scanningCount - 1);
+        applyScanHealth(result);
         if (result.decision === 'block') {
-          document.documentElement.dataset.secureintentGuard =
-            result.cause.kind === 'policy' && result.cause.reason !== 'too_large'
-              ? 'degraded'
-              : 'active';
           notifyPage({ state: 'blocked' });
           operation.removeOverlay = mountUploadOverlay(file.name, blockCause(result)).remove;
           return;
         }
         activeOperations.delete(operation);
-        if (result.source === 'policy')
-          document.documentElement.dataset.secureintentGuard = 'degraded';
         if (!input.isConnected || operations.get(input) !== operation) {
           notifyPage({ state: 'canceled' });
           return;
@@ -244,11 +332,16 @@ export function installUploadGuard(options: UploadGuardOptions = {}): () => void
   window.addEventListener('drop', onDrop, true);
   return () => {
     installed = false;
+    clearInterval(healthPoll);
+    if (restoredTimer) clearTimeout(restoredTimer);
     for (const operation of activeOperations) operation.removeOverlay?.();
     activeOperations.clear();
     unresolvedDropOverlay?.();
+    daemonStatus.remove();
     delete document.documentElement.dataset.secureintentGuard;
     delete document.documentElement.dataset.secureintentStatus;
+    window.removeEventListener('focus', refreshWhenVisible);
+    document.removeEventListener('visibilitychange', refreshWhenVisible);
     window.removeEventListener('input', interceptInput, true);
     window.removeEventListener('change', interceptChange, true);
     window.removeEventListener('dragover', onDragOver, true);

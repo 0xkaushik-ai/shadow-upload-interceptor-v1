@@ -30,6 +30,7 @@ interface RunningDaemon {
   process: ChildProcess;
   directory: string;
   socketPath: string;
+  binary: string;
   stderr: Buffer[];
 }
 
@@ -125,14 +126,11 @@ async function launchExtension(
   }
 }
 
-async function startDaemon(): Promise<RunningDaemon> {
-  const directory = mkdtempSync(join(tmpdir(), 'secureintent-shadow-daemon-e2e.'));
-  const socketPath = join(directory, 'daemon.sock');
-  const daemonBinary = resolve(
-    repoRoot,
-    process.env.SHADOW_E2E_DAEMON_BINARY ?? 'daemon/target/debug/secureintent-shadow-daemon',
-  );
-  chmodSync(daemonBinary, 0o755);
+async function startDaemonAt(
+  directory: string,
+  socketPath: string,
+  daemonBinary: string,
+): Promise<RunningDaemon> {
   const stderr: Buffer[] = [];
   const daemon = spawn(daemonBinary, [], {
     env: { ...process.env, SECUREINTENT_SHADOW_SOCKET: socketPath },
@@ -142,7 +140,6 @@ async function startDaemon(): Promise<RunningDaemon> {
 
   for (let attempt = 0; attempt < 400; attempt += 1) {
     if (daemon.exitCode !== null) {
-      rmSync(directory, { recursive: true, force: true });
       throw new Error(
         `detached daemon exited before listening (${daemon.exitCode}): ${Buffer.concat(stderr).toString('utf8')}`,
       );
@@ -151,7 +148,7 @@ async function startDaemon(): Promise<RunningDaemon> {
       const metadata = statSync(socketPath);
       if (metadata.isSocket()) {
         expect(metadata.mode & 0o777).toBe(0o600);
-        return { process: daemon, directory, socketPath, stderr };
+        return { process: daemon, directory, socketPath, binary: daemonBinary, stderr };
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -160,27 +157,47 @@ async function startDaemon(): Promise<RunningDaemon> {
   }
 
   daemon.kill('SIGKILL');
-  rmSync(directory, { recursive: true, force: true });
   throw new Error('detached daemon did not create its private socket within 10 seconds');
+}
+
+async function startDaemon(): Promise<RunningDaemon> {
+  const directory = mkdtempSync(join(tmpdir(), 'secureintent-shadow-daemon-e2e.'));
+  const socketPath = join(directory, 'daemon.sock');
+  const daemonBinary = resolve(
+    repoRoot,
+    process.env.SHADOW_E2E_DAEMON_BINARY ?? 'daemon/target/debug/secureintent-shadow-daemon',
+  );
+  chmodSync(daemonBinary, 0o755);
+  try {
+    return await startDaemonAt(directory, socketPath, daemonBinary);
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function stopDaemonProcess(running: RunningDaemon | undefined): Promise<void> {
+  if (!running) return;
+  if (running.process.exitCode === null) {
+    const closed = new Promise<void>((resolveClose) =>
+      running.process.once('close', () => resolveClose()),
+    );
+    running.process.kill('SIGTERM');
+    const stopped = await Promise.race([
+      closed.then(() => true),
+      new Promise<false>((resolveDelay) => setTimeout(() => resolveDelay(false), 1_000)),
+    ]);
+    if (!stopped && running.process.exitCode === null) {
+      running.process.kill('SIGKILL');
+      await closed;
+    }
+  }
 }
 
 async function stopDaemon(running: RunningDaemon | undefined): Promise<void> {
   if (!running) return;
   try {
-    if (running.process.exitCode === null) {
-      const closed = new Promise<void>((resolveClose) =>
-        running.process.once('close', () => resolveClose()),
-      );
-      running.process.kill('SIGTERM');
-      const stopped = await Promise.race([
-        closed.then(() => true),
-        new Promise<false>((resolveDelay) => setTimeout(() => resolveDelay(false), 1_000)),
-      ]);
-      if (!stopped && running.process.exitCode === null) {
-        running.process.kill('SIGKILL');
-        await closed;
-      }
-    }
+    await stopDaemonProcess(running);
   } finally {
     rmSync(running.directory, { recursive: true, force: true });
   }
@@ -204,6 +221,16 @@ async function openForge(context: BrowserContext, guard: 'active' | 'degraded'):
   const page = await context.newPage();
   await page.goto(demoUrl);
   await expect.poll(() => page.locator('html').getAttribute('data-secureintent-guard')).toBe(guard);
+  await expect(page.locator('secureintent-daemon-status')).toHaveAttribute(
+    'data-state',
+    guard === 'active' ? 'online' : 'offline',
+  );
+  expect(
+    await page.evaluate(() => {
+      const host = document.querySelector('secureintent-daemon-status');
+      return host ? host.shadowRoot : 'missing';
+    }),
+  ).toBeNull();
   return page;
 }
 
@@ -369,6 +396,47 @@ test.describe('protected upload loop', () => {
     await chooseFile(page, oversized);
     await expectBlocked(page);
     await expect(page.locator('html')).toHaveAttribute('data-secureintent-guard', 'active');
+    await page.close();
+  });
+
+  test('shows daemon loss, blocks fail-closed, and recovers without reloading', async () => {
+    test.setTimeout(45_000);
+    const page = await openForge(requireContext(running), 'active');
+    const stoppedDaemon = daemon;
+    if (!stoppedDaemon) throw new Error('Detached daemon did not start.');
+
+    await stopDaemonProcess(stoppedDaemon);
+    await expect
+      .poll(() => page.locator('html').getAttribute('data-secureintent-guard'), {
+        timeout: 15_000,
+      })
+      .toBe('degraded');
+    await expect(page.locator('secureintent-daemon-status')).toHaveAttribute(
+      'data-state',
+      'offline',
+    );
+
+    await chooseFile(page, resolve(repoRoot, 'testdata/allow.txt'));
+    await expectBlocked(page);
+    await page.keyboard.press('Escape');
+
+    daemon = await startDaemonAt(
+      stoppedDaemon.directory,
+      stoppedDaemon.socketPath,
+      stoppedDaemon.binary,
+    );
+    await expect
+      .poll(() => page.locator('html').getAttribute('data-secureintent-guard'), {
+        timeout: 15_000,
+      })
+      .toBe('active');
+    await expect(page.locator('secureintent-daemon-status')).toHaveAttribute(
+      'data-state',
+      /^(restored|online)$/,
+    );
+
+    await chooseFile(page, resolve(repoRoot, 'testdata/allow.txt'));
+    await expectAllowed(page, 'allow.txt');
     await page.close();
   });
 });

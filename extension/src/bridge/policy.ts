@@ -29,6 +29,7 @@ export interface GuardHealthResult {
   available: boolean;
   protocol: number | null;
   protected: boolean;
+  onUnavailable: FailureAction;
   reason?: ScanFailureReason;
 }
 

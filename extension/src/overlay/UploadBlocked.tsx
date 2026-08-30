@@ -25,7 +25,12 @@ function ruleFindingCopy(rule: RuleId): string {
 
 function findingLabel(cause: UploadBlockCause): string {
   if (cause.kind === 'policy') {
-    return cause.reason === 'too_large' ? 'Scan limit enforced' : 'Scanner unavailable';
+    if (cause.reason === 'too_large') return 'Scan limit enforced';
+    if (cause.reason === 'protocol_mismatch') return 'Scanner incompatible';
+    if (cause.reason === 'invalid_request' || cause.reason === 'invalid_response') {
+      return 'Scan verification failed';
+    }
+    return 'Local scanner unavailable';
   }
   const { rule } = cause;
   return rule === 'aws_access_key_id' ? 'Access key detected' : 'Private key detected';
@@ -48,10 +53,27 @@ function findingCopy(filename: string, cause: UploadBlockCause) {
       </>
     );
   }
+  if (cause.reason === 'protocol_mismatch') {
+    return (
+      <>
+        SecureIntent could not verify <strong>{filename}</strong> because the local scanner uses an
+        incompatible protocol version. Update or reinstall the scanner, then select the file again.
+      </>
+    );
+  }
+  if (cause.reason === 'invalid_request' || cause.reason === 'invalid_response') {
+    return (
+      <>
+        SecureIntent could not complete a valid local scan for <strong>{filename}</strong>. Your
+        fail-closed policy blocked the upload. Retry after checking the extension and scanner.
+      </>
+    );
+  }
   return (
     <>
-      The local scanner could not verify <strong>{filename}</strong>. Your protection policy blocks
-      unverified uploads, so it was not sent to this page.
+      SecureIntent could not verify <strong>{filename}</strong> because the local scanner daemon is
+      offline or unreachable. Your fail-closed policy blocked the upload. Start or restart the
+      daemon, then select the file again.
     </>
   );
 }

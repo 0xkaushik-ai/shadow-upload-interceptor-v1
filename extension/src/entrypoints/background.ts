@@ -46,16 +46,18 @@ export default defineBackground(() => {
           available: false,
           protocol: null,
           protected: false,
+          onUnavailable: policy.onUnavailable,
           reason: 'invalid_request',
         };
       }
       const native: HealthCheckResult = await checkNativeHost(crypto.randomUUID());
-      return { ...native, protected: true };
+      return { ...native, protected: true, onUnavailable: policy.onUnavailable };
     };
     return respond(health(), {
       available: false,
       protocol: null,
       protected: true,
+      onUnavailable: 'block',
       reason: 'host_unavailable',
     } satisfies GuardHealthResult);
   });
