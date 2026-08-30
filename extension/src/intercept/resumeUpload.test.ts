@@ -21,19 +21,23 @@ afterEach(() => {
 });
 
 describe('FileList reconstruction', () => {
-  test('assigns the retained file and sends a fresh change to the page', () => {
+  test('assigns the retained file and sends fresh input then change events to the page', () => {
     vi.stubGlobal('DataTransfer', FakeDataTransfer);
     const input = document.createElement('input');
     input.type = 'file';
     Object.defineProperty(input, 'files', { value: [], writable: true, configurable: true });
     const file = new File(['harmless'], 'allow.txt', { type: 'text/plain' });
-    const listener = vi.fn();
-    input.addEventListener('change', listener);
+    const inputListener = vi.fn();
+    const changeListener = vi.fn();
+    input.addEventListener('input', inputListener);
+    input.addEventListener('change', changeListener);
 
     expect(resumeIntoInput(input, file)).toBe(true);
     expect(input.files?.[0]).toBe(file);
-    expect(listener).toHaveBeenCalledOnce();
-    expect(listener.mock.calls[0]?.[0].isTrusted).toBe(false);
+    expect(inputListener).toHaveBeenCalledOnce();
+    expect(changeListener).toHaveBeenCalledOnce();
+    expect(inputListener.mock.calls[0]?.[0].isTrusted).toBe(false);
+    expect(changeListener.mock.calls[0]?.[0].isTrusted).toBe(false);
   });
 
   test('returns false when the browser refuses FileList reconstruction', () => {

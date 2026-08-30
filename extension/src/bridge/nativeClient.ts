@@ -55,18 +55,17 @@ export function scanWithNativeHost(
           finish(unavailableOutcome('invalid_response'));
           return;
         }
-        finish({
-          kind: 'verdict',
-          decision: message.decision,
-          rule: message.rule,
-        });
+        finish(
+          message.decision === 'allow'
+            ? { kind: 'verdict', decision: 'allow', rule: null }
+            : { kind: 'verdict', decision: 'block', rule: message.rule },
+        );
       });
       port.onDisconnect.addListener(() => finish(unavailableOutcome('host_disconnected')));
 
       port.postMessage({
         type: 'scan_begin',
         id: request.scanId,
-        name: request.name,
         size: request.size,
         protocol: PROTOCOL_VERSION,
       });

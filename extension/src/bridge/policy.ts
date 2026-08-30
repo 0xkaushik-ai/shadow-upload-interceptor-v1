@@ -29,7 +29,6 @@ export interface GuardHealthResult {
   available: boolean;
   protocol: number | null;
   protected: boolean;
-  policy: GuardPolicy;
   reason?: ScanFailureReason;
 }
 
@@ -135,18 +134,13 @@ export function originIsProtected(origin: string, policy: GuardPolicy): boolean 
 
 export function resolveScanOutcome(outcome: ScanOutcome, policy: GuardPolicy): ScanFileResult {
   if (outcome.kind === 'verdict') {
-    return {
-      decision: outcome.decision,
-      rule: outcome.rule,
-      failOpen: false,
-    };
+    return outcome.decision === 'allow'
+      ? { decision: 'allow', source: 'scanner' }
+      : { decision: 'block', cause: { kind: 'rule', rule: outcome.rule } };
   }
 
   const action = outcome.reason === 'too_large' ? policy.onTooLarge : policy.onUnavailable;
-  return {
-    decision: action,
-    rule: null,
-    failOpen: action === 'allow',
-    reason: outcome.reason,
-  };
+  return action === 'allow'
+    ? { decision: 'allow', source: 'policy', reason: outcome.reason }
+    : { decision: 'block', cause: { kind: 'policy', reason: outcome.reason } };
 }

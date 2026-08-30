@@ -16,8 +16,6 @@ describe('extension bridge protocol', () => {
       isScanFileRequest({
         type: 'scan-file',
         scanId: '80bb0ad2-25f6-494a-9101-1f547dfa79bb',
-        name: 'allow.txt',
-        mime: 'text/plain',
         size: 3,
         bytes: new Uint8Array([1, 2, 3]),
       }),
@@ -29,25 +27,36 @@ describe('extension bridge protocol', () => {
       isScanFileRequest({
         type: 'scan-file',
         scanId: 'id',
-        name: 'file',
-        mime: '',
         size: 1,
         bytes: { 0: 1 },
       }),
     ).toBe(false);
   });
 
-  test('rejects control characters and oversized UTF-8 filename metadata', () => {
+  test('rejects metadata and unknown fields in byte-only scan requests', () => {
     const baseRequest = {
       type: 'scan-file',
       scanId: 'scan-1',
-      mime: 'text/plain',
       size: 0,
       bytes: new Uint8Array(),
     };
     expect(isScanFileRequest({ ...baseRequest, name: 'line\nbreak.txt' })).toBe(false);
-    expect(isScanFileRequest({ ...baseRequest, name: '界'.repeat(200) })).toBe(false);
-    expect(isScanFileRequest({ ...baseRequest, scanId: 'bad/id', name: 'safe.txt' })).toBe(false);
+    expect(isScanFileRequest({ ...baseRequest, mime: 'text/plain' })).toBe(false);
+    expect(isScanFileRequest({ ...baseRequest, scanId: 'bad/id' })).toBe(false);
+  });
+
+  test('rejects unknown preflight fields and invalid result reasons', async () => {
+    const { isScanFileResult, isScanPreflightRequest } = await import('./protocol');
+    expect(isScanPreflightRequest({ type: 'scan-preflight', scanId: 'scan', size: 0 })).toBe(true);
+    expect(
+      isScanPreflightRequest({ type: 'scan-preflight', scanId: 'scan', size: 0, name: 'x' }),
+    ).toBe(false);
+    expect(isScanFileResult({ decision: 'allow', source: 'policy', reason: 'invented' })).toBe(
+      false,
+    );
+    expect(
+      isScanFileResult({ decision: 'block', cause: { kind: 'policy', reason: 'invented' } }),
+    ).toBe(false);
   });
 
   test('accepts only the matching verdict and known rule', () => {

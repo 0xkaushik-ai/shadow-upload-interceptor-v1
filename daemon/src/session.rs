@@ -108,7 +108,7 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
 
     use super::{MAX_FILE_BYTES, ScanSession, SessionError};
-    use crate::scan::{Decision, RuleId, ScanResult};
+    use crate::scan::{RuleId, ScanResult};
 
     #[test]
     fn detects_a_marker_split_across_chunks() {
@@ -126,10 +126,7 @@ mod tests {
             .expect("second chunk should succeed");
         assert_eq!(
             session.finish("split"),
-            Ok(ScanResult {
-                decision: Decision::Block,
-                rule: Some(RuleId::PemPrivateKey),
-            })
+            Ok(ScanResult::Block(RuleId::PemPrivateKey))
         );
     }
 
@@ -187,13 +184,7 @@ mod tests {
         session
             .begin("first", 0)
             .expect("first begin should succeed");
-        assert_eq!(
-            session.finish("first"),
-            Ok(ScanResult {
-                decision: Decision::Allow,
-                rule: None,
-            })
-        );
+        assert_eq!(session.finish("first"), Ok(ScanResult::Allow));
 
         let secret = b"BEGIN OPENSSH PRIVATE KEY";
         session
@@ -204,10 +195,7 @@ mod tests {
             .expect("second chunk should succeed");
         assert_eq!(
             session.finish("second"),
-            Ok(ScanResult {
-                decision: Decision::Block,
-                rule: Some(RuleId::OpensshPrivateKey),
-            })
+            Ok(ScanResult::Block(RuleId::OpensshPrivateKey))
         );
     }
 }

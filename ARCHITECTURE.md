@@ -17,9 +17,10 @@ sequenceDiagram
     Daemon->>Broker: ready { protocol: 1 }
     Broker->>BG: ready { protocol: 1 }
     Developer->>Page: choose or drop File
-    CS-->>CS: capture on window; cancel synchronously
+    CS-->>CS: trusted input capture on window; snapshot, clear and cancel synchronously
     CS-->>Page: clear input; Scanning (metadata only)
-    CS->>CS: File.arrayBuffer() → Uint8Array
+    CS->>BG: metadata-only preflight
+    CS->>CS: File.arrayBuffer() → Uint8Array only after BG permits scanning
     CS->>BG: structured-clone scan request
     BG->>Broker: connectNative(com.secureintent.shadow)
     BG->>Broker: scan_begin + base64 scan_chunk × N + scan_end
@@ -82,9 +83,11 @@ manifest, which allows exactly `chrome-extension://<ID>/`; wildcards are absent 
 slash is required. The broker does not scan and does not become a service. It relays only the four
 recognized, bounded request frame types to the independently running daemon.
 
-The daemon is started and restarted by a systemd user service, not by Chrome. It listens at
-`$XDG_RUNTIME_DIR/secureintent-shadow/daemon.sock`; its directory is `0700`, its socket is `0600`,
-and both peers verify Linux `SO_PEERCRED` ownership before exchanging frames. Closing Chrome or any
+The daemon is started and restarted by a user service manager, not by Chrome. Linux uses systemd
+at `$XDG_RUNTIME_DIR/secureintent-shadow/daemon.sock`; macOS uses launchd at
+`~/Library/Caches/secureintent-shadow/daemon.sock`. Its directory is `0700`, its socket is `0600`,
+and both peers verify same-user ownership (`SO_PEERCRED` on Linux, `getpeereid` on macOS) before
+exchanging frames. Closing Chrome or any
 one Native Messaging port removes only that broker connection. The daemon PID and listener remain.
 
 For a reproducible one-command demo, the unpacked manifest contains a public development key. The
@@ -124,7 +127,7 @@ testable; file bytes still avoid TCP, disk, and cloud infrastructure.
 
 ```json
 { "type": "health", "id": "uuid", "protocol": 1 }
-{ "type": "scan_begin", "id": "uuid", "name": "id_rsa", "size": 1234, "protocol": 1 }
+{ "type": "scan_begin", "id": "uuid", "size": 1234, "protocol": 1 }
 { "type": "scan_chunk", "id": "uuid", "offset": 0, "data": "<base64>" }
 { "type": "scan_end", "id": "uuid" }
 ```
@@ -135,7 +138,7 @@ testable; file bytes still avoid TCP, disk, and cloud infrastructure.
 ```
 
 Every request uses a strict schema; unknown fields are rejected. The daemon accepts protocol v1, one
-active scan, a maximum 512 KiB JSON frame, a maximum declared file size of 8 MiB, bounded metadata,
+active scan, a maximum 512 KiB JSON frame, a maximum declared file size of 8 MiB,
 matching IDs, contiguous raw offsets, valid base64, no decoded overflow, and exact final length. A
 violation closes that broker connection; the persistent daemon continues accepting later clients.
 The worker reports an unavailable outcome and the current policy selects Allow or Block. The
@@ -181,7 +184,8 @@ dependency-light; `./run-demo.sh --tauri-daemon` and the dedicated CI job exerci
 path. There is no window, tray, command surface, plugin, updater, capability, or frontend.
 
 Manual installation writes `com.secureintent.shadow.service` under the user's systemd configuration
-and enables it at login. systemd—not Chrome—owns, restarts, and stops the daemon. This is
+on Linux, or `com.secureintent.shadow.plist` under `~/Library/LaunchAgents` on macOS, and enables
+it at login. systemd/launchd—not Chrome—owns, restarts, and stops the daemon. This is
 intentional: a service manager is safer and more observable than double-fork/self-daemonization.
 Integration tests prove that three brokers can exit while one daemon PID and socket remain
 available.
@@ -193,7 +197,7 @@ available.
 | Malicious destination page | Earliest capture, synchronous clearing, isolated content world, closed Shadow DOM | The page can hide/remove the overlay host but cannot recover already-blocked bytes; a browser exploit or earlier privileged extension is out of scope |
 | Page forges extension messages | Background validates sender origin and typed request; no externally-connectable API | Compromised renderer could attack its content script, so the worker trusts only bounded bytes |
 | Unrelated extension calls host | Native manifest pins one extension origin | A fully compromised Chrome profile can alter local manifests |
-| Local process probes scanner | Private `0700` runtime directory, `0600` AF_UNIX socket, Linux peer-UID checks, no TCP | A hostile process already running as the same user can inspect memory or replace user-owned binaries/configuration |
+| Local process probes scanner | Private `0700` runtime directory, `0600` AF_UNIX socket, same-user peer checks (`SO_PEERCRED` Linux, `getpeereid` macOS), no TCP | A hostile process already running as the same user can inspect memory or replace user-owned binaries/configuration |
 | Oversized/malformed input | Frame, file, offset, base64 and final-size bounds | A valid 8 MiB file intentionally consumes up to the configured bound |
 | Broker/daemon crash or missing install | Bounded timeout followed by configured Allow or Block; bundled and pre-policy defaults are Block | An explicitly configured fail-open development policy releases unscanned bytes and must not be mistaken for production posture |
 | Memory recovery | Zeroizing owned frames, chunks and aggregate; no disk writes | Copies outside Rust ownership, swap and privileged memory inspection remain possible |

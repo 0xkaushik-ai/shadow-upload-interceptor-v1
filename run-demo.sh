@@ -75,6 +75,15 @@ resolve_browser() {
     done
   fi
 
+  if [[ -z "${DEMO_CHROME_BIN}" && "$(uname -s)" == "Darwin" ]]; then
+    for candidate in \
+      "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
+      "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+      "${HOME}"/Library/Caches/ms-playwright/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium; do
+      if [[ -x "${candidate}" ]]; then DEMO_CHROME_BIN="${candidate}"; break; fi
+    done
+  fi
+
   if [[ -z "${DEMO_CHROME_BIN}" ]]; then
     for candidate in \
       "${HOME}"/.cache/ms-playwright/chromium-*/chrome-linux64/chrome \
@@ -104,8 +113,8 @@ while (( $# > 0 )); do
   shift
 done
 
-if [[ "$(uname -s)" != "Linux" ]]; then
-  echo "This demo launcher currently supports Google Chrome on Linux." >&2
+if [[ "$(uname -s)" != "Linux" && "$(uname -s)" != "Darwin" ]]; then
+  echo "This demo launcher supports Linux and macOS only." >&2
   exit 1
 fi
 
@@ -116,13 +125,20 @@ for required_command in node cargo; do
   fi
 done
 
+DIRECT_PNPM_VERSION=""
 if command -v pnpm >/dev/null 2>&1; then
+  DIRECT_PNPM_VERSION="$(pnpm --version 2>/dev/null || true)"
+fi
+if [[ "${DIRECT_PNPM_VERSION}" == "${PNPM_VERSION}" ]]; then
   PNPM_COMMAND=(pnpm)
+elif command -v corepack >/dev/null 2>&1; then
+  echo "Using pinned pnpm ${PNPM_VERSION} through Corepack (direct pnpm is ${DIRECT_PNPM_VERSION:-unavailable})."
+  PNPM_COMMAND=(corepack "pnpm@${PNPM_VERSION}")
 elif command -v npx >/dev/null 2>&1; then
-  echo "pnpm is not on PATH; using pnpm ${PNPM_VERSION} through npx."
+  echo "Using pinned pnpm ${PNPM_VERSION} through npx (direct pnpm is ${DIRECT_PNPM_VERSION:-unavailable})."
   PNPM_COMMAND=(npx --yes "pnpm@${PNPM_VERSION}")
 else
-  echo "Missing pnpm. Install pnpm ${PNPM_VERSION}, or provide npm/npx so it can be bootstrapped." >&2
+  echo "pnpm ${PNPM_VERSION} is required. Install it directly, enable Corepack, or provide npm/npx." >&2
   exit 1
 fi
 
@@ -191,7 +207,12 @@ if [[ ! "${EXTENSION_ID}" =~ ^[a-p]{32}$ ]]; then
 fi
 
 if [[ "${MODE}" == "run" ]]; then
-  CHROME_PROFILE="$(mktemp -d "${TMPDIR:-/tmp}/secureintent-shadow-chrome.XXXXXX")"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    # macOS sockaddr_un paths are short; the profile also contains the ephemeral daemon socket.
+    CHROME_PROFILE="$(mktemp -d /tmp/secureintent-shadow-chrome.XXXXXX)"
+  else
+    CHROME_PROFILE="$(mktemp -d "${TMPDIR:-/tmp}/secureintent-shadow-chrome.XXXXXX")"
+  fi
 fi
 
 echo "[3/4] Building the broker and detached Rust daemon (${HOST_VARIANT})..."

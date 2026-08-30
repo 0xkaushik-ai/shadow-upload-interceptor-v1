@@ -89,3 +89,63 @@ jobs:
           xvfb-run -a env \
             SHADOW_E2E_DAEMON_BINARY=daemon/target/debug/secureintent-shadow-tauri \
             pnpm --dir extension e2e
+
+  macos-native-host:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Verify extension and portable scripts
+        run: |
+          pnpm --dir extension install --frozen-lockfile
+          pnpm --dir extension lint
+          pnpm --dir extension compile
+          pnpm --dir extension test
+          pnpm --dir extension build
+          bash -n run-demo.sh scripts/*.sh
+          node --check scripts/*.mjs dummy-page/app.js
+      - name: Build, lint, and smoke native macOS daemon
+        run: |
+          cargo fmt --manifest-path daemon/Cargo.toml --check
+          cargo clippy --manifest-path daemon/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path daemon/Cargo.toml
+          cargo build --release --manifest-path daemon/Cargo.toml \
+            --bin secureintent-shadow-host --bin secureintent-shadow-daemon
+          SHADOW_DAEMON_BINARY=daemon/target/release/secureintent-shadow-daemon \
+          SHADOW_HOST_BINARY=daemon/target/release/secureintent-shadow-host \
+            node scripts/smoke-detached.mjs
+      - name: Build and exercise the detached Tauri macOS service
+        run: |
+          cargo clippy --manifest-path daemon/Cargo.toml --features tauri-host --bin secureintent-shadow-tauri -- -D warnings
+          cargo build --release --manifest-path daemon/Cargo.toml --features tauri-host --bin secureintent-shadow-tauri
+          SHADOW_DAEMON_BINARY=daemon/target/release/secureintent-shadow-tauri \
+          SHADOW_HOST_BINARY=daemon/target/release/secureintent-shadow-host \
+            node scripts/smoke-detached.mjs
+          SHADOW_INSTALL_TEST_SERVICE_MODE=install \
+          SHADOW_INSTALL_TEST_DAEMON_VARIANT=tauri \
+            ./scripts/test-install.sh "${RUNNER_TEMP}/secureintent-launchd-test"
+      - name: Exercise macOS Chrome for Testing extension-to-Tauri loop
+        run: |
+          pnpm --dir extension exec playwright install chromium
+          SHADOW_E2E_HOST_BINARY=daemon/target/release/secureintent-shadow-host \
+          SHADOW_E2E_DAEMON_BINARY=daemon/target/release/secureintent-shadow-tauri \
+            pnpm --dir extension e2e
+      - name: Package macOS executables with modes preserved
+        run: |
+          tar -C daemon/target/release -czf secureintent-shadow-macos-executables.tar.gz \
+            secureintent-shadow-host secureintent-shadow-daemon secureintent-shadow-tauri
+      - uses: actions/upload-artifact@v4
+        with:
+          name: secureintent-shadow-macos-executables
+          if-no-files-found: error
+          path: secureintent-shadow-macos-executables.tar.gz
