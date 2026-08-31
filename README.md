@@ -213,6 +213,8 @@ flows through Native Messaging, renamed files, closed Shadow DOM, both size-cap 
 allow-on-failure and block-on-failure behavior:
 
 ```bash
+cargo build --manifest-path daemon/Cargo.toml \
+  --bin secureintent-shadow-host --bin secureintent-shadow-daemon
 cd extension
 pnpm exec playwright install chromium
 pnpm e2e
