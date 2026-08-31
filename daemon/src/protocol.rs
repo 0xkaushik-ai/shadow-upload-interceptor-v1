@@ -1,11 +1,14 @@
-use std::io::{self, Read, Write};
+use std::{
+    borrow::Cow,
+    io::{self, Read, Write},
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
 use crate::{
-    scan::ScanResult,
+    scan::Decision,
     session::{ScanSession, SessionError},
 };
 
@@ -13,6 +16,7 @@ use crate::{
 pub(crate) const MAX_FRAME_BYTES: usize = 512 * 1024;
 pub const PROTOCOL_VERSION: u16 = 1;
 const MAX_IDENTIFIER_BYTES: usize = 64;
+const MAX_FILENAME_BYTES: usize = 512;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -24,6 +28,8 @@ enum NativeRequest<'a> {
     #[serde(rename = "scan_begin")]
     Begin {
         id: &'a str,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
         size: u64,
         protocol: u16,
     },
@@ -64,6 +70,8 @@ pub enum ProtocolError {
     InvalidJson(#[from] serde_json::Error),
     #[error("scan identifier is empty or too long")]
     InvalidIdentifier,
+    #[error("filename metadata is empty or too long")]
+    InvalidFilename,
     #[error("unsupported protocol version")]
     UnsupportedProtocol,
     #[error("scan protocol is invalid: {0}")]
@@ -120,6 +128,13 @@ fn validate_identifier(id: &str) -> Result<(), ProtocolError> {
     Ok(())
 }
 
+fn validate_filename(name: &str) -> Result<(), ProtocolError> {
+    if name.is_empty() || name.len() > MAX_FILENAME_BYTES || name.chars().any(char::is_control) {
+        return Err(ProtocolError::InvalidFilename);
+    }
+    Ok(())
+}
+
 pub fn run_scanner_protocol<R: Read, W: Write>(
     mut reader: R,
     mut writer: W,
@@ -145,8 +160,21 @@ pub fn run_scanner_protocol<R: Read, W: Write>(
                     },
                 )?;
             }
-            NativeRequest::Begin { id, size, protocol } => {
+            NativeRequest::Begin {
+                id,
+                name,
+                size,
+                protocol,
+            } => {
                 validate_identifier(id)?;
+                match name {
+                    Cow::Borrowed(name) => validate_filename(name)?,
+                    Cow::Owned(name) => {
+                        // Escaped JSON filenames require a temporary decoded copy; scrub it too.
+                        let name = Zeroizing::new(name);
+                        validate_filename(&name)?;
+                    }
+                }
                 if protocol != PROTOCOL_VERSION {
                     return Err(ProtocolError::UnsupportedProtocol);
                 }
@@ -159,13 +187,13 @@ pub fn run_scanner_protocol<R: Read, W: Write>(
             NativeRequest::End { id } => {
                 validate_identifier(id)?;
                 let result = session.finish(id)?;
-                let response = match result {
-                    ScanResult::Block(rule) => NativeResponse::Verdict {
+                let response = match result.decision {
+                    Decision::Block => NativeResponse::Verdict {
                         id,
                         decision: "block",
-                        rule: Some(rule.as_str()),
+                        rule: result.rule.map(|rule| rule.as_str()),
                     },
-                    ScanResult::Allow => NativeResponse::Verdict {
+                    Decision::Allow => NativeResponse::Verdict {
                         id,
                         decision: "allow",
                         rule: None,
@@ -186,7 +214,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        MAX_FRAME_BYTES, PROTOCOL_VERSION, ProtocolError, read_frame, run_scanner_protocol,
+        MAX_FILENAME_BYTES, MAX_FRAME_BYTES, PROTOCOL_VERSION, ProtocolError, read_frame,
+        run_scanner_protocol,
     };
     use crate::session::SessionError;
 
@@ -196,12 +225,13 @@ mod tests {
         output.extend_from_slice(&payload);
     }
 
-    fn append_scan(output: &mut Vec<u8>, id: &str, bytes: &[u8]) {
+    fn append_scan(output: &mut Vec<u8>, id: &str, name: &str, bytes: &[u8]) {
         append_request(
             output,
             json!({
                 "type": "scan_begin",
                 "id": id,
+                "name": name,
                 "size": bytes.len(),
                 "protocol": PROTOCOL_VERSION
             }),
@@ -235,7 +265,7 @@ mod tests {
     fn framed_protocol_returns_only_the_verdict() {
         let bytes = b"safe prefix BEGIN RSA PRIVATE KEY safe suffix";
         let mut input = Vec::new();
-        append_scan(&mut input, "scan-1", bytes);
+        append_scan(&mut input, "scan-1", "renamed.txt", bytes);
 
         let mut output = Vec::new();
         run_scanner_protocol(Cursor::new(input), &mut output).expect("protocol should complete");
@@ -290,8 +320,18 @@ mod tests {
     #[test]
     fn supports_multiple_sequential_scans_without_extra_stdout() {
         let mut input = Vec::new();
-        append_scan(&mut input, "safe", b"ordinary source code");
-        append_scan(&mut input, "secret", b"BEGIN OPENSSH PRIVATE KEY");
+        append_scan(
+            &mut input,
+            "safe",
+            "looks-secret.pem",
+            b"ordinary source code",
+        );
+        append_scan(
+            &mut input,
+            "secret",
+            "looks-safe.txt",
+            b"BEGIN OPENSSH PRIVATE KEY",
+        );
 
         let mut output = Vec::new();
         run_scanner_protocol(Cursor::new(input), &mut output).expect("both scans should complete");
@@ -368,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_identifiers_and_filename_fields() {
+    fn rejects_unbounded_or_control_character_metadata() {
         let mut invalid_identifier = Vec::new();
         append_request(
             &mut invalid_identifier,
@@ -379,20 +419,55 @@ mod tests {
             Err(ProtocolError::InvalidIdentifier)
         ));
 
-        // Metadata is intentionally absent from the byte-only wire protocol. Unknown fields are
-        // denied by serde rather than accepted and ignored.
-        let mut unknown_metadata = Vec::new();
+        let mut invalid_filename = Vec::new();
         append_request(
-            &mut unknown_metadata,
+            &mut invalid_filename,
             json!({
-                "type": "scan_begin", "id": "id", "name": "private.pem",
-                "size": 0, "protocol": PROTOCOL_VERSION
+                "type": "scan_begin",
+                "id": "id",
+                "name": "line\nbreak.pem",
+                "size": 0,
+                "protocol": PROTOCOL_VERSION
             }),
         );
         assert!(matches!(
-            run_scanner_protocol(Cursor::new(unknown_metadata), Vec::new()),
-            Err(ProtocolError::InvalidJson(_))
+            run_scanner_protocol(Cursor::new(invalid_filename), Vec::new()),
+            Err(ProtocolError::InvalidFilename)
         ));
+
+        let mut oversized_filename = Vec::new();
+        append_request(
+            &mut oversized_filename,
+            json!({
+                "type": "scan_begin",
+                "id": "id",
+                "name": "x".repeat(MAX_FILENAME_BYTES + 1),
+                "size": 0,
+                "protocol": PROTOCOL_VERSION
+            }),
+        );
+        assert!(matches!(
+            run_scanner_protocol(Cursor::new(oversized_filename), Vec::new()),
+            Err(ProtocolError::InvalidFilename)
+        ));
+    }
+
+    #[test]
+    fn accepts_escaped_but_safe_filename_metadata() {
+        let mut input = Vec::new();
+        append_scan(&mut input, "scan", "a-\"quoted\"-name.txt", b"safe");
+        let mut output = Vec::new();
+        run_scanner_protocol(Cursor::new(input), &mut output)
+            .expect("escaped filename should work");
+        assert_eq!(
+            decode_responses(output),
+            vec![json!({
+                "type": "verdict",
+                "id": "scan",
+                "decision": "allow",
+                "rule": null
+            })]
+        );
     }
 
     #[test]
@@ -403,6 +478,7 @@ mod tests {
             json!({
                 "type": "scan_begin",
                 "id": "id",
+                "name": "file.txt",
                 "size": 3,
                 "protocol": PROTOCOL_VERSION
             }),
@@ -422,6 +498,7 @@ mod tests {
             json!({
                 "type": "scan_begin",
                 "id": "id",
+                "name": "file.txt",
                 "size": 0,
                 "protocol": 0
             }),

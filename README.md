@@ -387,6 +387,8 @@ flows through Native Messaging, renamed files, closed Shadow DOM, both size-cap 
 allow-on-failure and block-on-failure behavior:
 
 ```bash
+cargo build --manifest-path daemon/Cargo.toml \
+  --bin secureintent-shadow-host --bin secureintent-shadow-daemon
 cd extension
 corepack pnpm@10.28.2 exec playwright install chromium
 corepack pnpm@10.28.2 e2e
@@ -400,7 +402,7 @@ policy parsing and enforcement, native-client failures and timeouts, synchronous
 stale responses, removed inputs, drop routing, DOM metadata minimization, and `FileList`
 reconstruction. A reviewer does not need GTK or WebKit to run the default equivalent daemon core.
 
-The last verified local run completed 28 Rust unit tests, 38 extension unit tests, and 8 real-browser
+The last verified local run completed 29 Rust unit tests, 29 extension unit tests, and 7 real-browser
 tests. The Tauri lifecycle smoke also proved that one PID survives malformed IPC and three separate
 Native Messaging broker sessions.
 

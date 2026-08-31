@@ -127,7 +127,7 @@ testable; file bytes still avoid TCP, disk, and cloud infrastructure.
 
 ```json
 { "type": "health", "id": "uuid", "protocol": 1 }
-{ "type": "scan_begin", "id": "uuid", "size": 1234, "protocol": 1 }
+{ "type": "scan_begin", "id": "uuid", "name": "id_rsa", "size": 1234, "protocol": 1 }
 { "type": "scan_chunk", "id": "uuid", "offset": 0, "data": "<base64>" }
 { "type": "scan_end", "id": "uuid" }
 ```
@@ -138,7 +138,7 @@ testable; file bytes still avoid TCP, disk, and cloud infrastructure.
 ```
 
 Every request uses a strict schema; unknown fields are rejected. The daemon accepts protocol v1, one
-active scan, a maximum 512 KiB JSON frame, a maximum declared file size of 8 MiB,
+active scan, a maximum 512 KiB JSON frame, a maximum declared file size of 8 MiB, bounded metadata,
 matching IDs, contiguous raw offsets, valid base64, no decoded overflow, and exact final length. A
 violation closes that broker connection; the persistent daemon continues accepting later clients.
 The worker reports an unavailable outcome and the current policy selects Allow or Block. The

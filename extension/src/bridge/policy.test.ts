@@ -14,20 +14,23 @@ describe('upload enforcement policy', () => {
         { kind: 'verdict', decision: 'block', rule: 'pem_private_key' },
         DEFAULT_GUARD_POLICY,
       ),
-    ).toEqual({ decision: 'block', cause: { kind: 'rule', rule: 'pem_private_key' } });
+    ).toEqual({ decision: 'block', rule: 'pem_private_key', failOpen: false });
   });
 
   test('defaults to fail-closed and permits an explicit development fail-open policy', () => {
     expect(resolveScanOutcome(unavailableOutcome('timeout'), DEFAULT_GUARD_POLICY)).toEqual({
       decision: 'block',
-      cause: { kind: 'policy', reason: 'timeout' },
+      rule: null,
+      failOpen: false,
+      reason: 'timeout',
     });
     const developmentPolicy = applyGuardPolicyOverride({ onUnavailable: 'allow' });
     expect(developmentPolicy).not.toBeNull();
     if (!developmentPolicy) throw new Error('expected a valid policy override');
     expect(resolveScanOutcome(unavailableOutcome('timeout'), developmentPolicy)).toEqual({
       decision: 'allow',
-      source: 'policy',
+      rule: null,
+      failOpen: true,
       reason: 'timeout',
     });
     expect(SECURE_FALLBACK_POLICY.onUnavailable).toBe('block');
@@ -39,7 +42,8 @@ describe('upload enforcement policy', () => {
     if (!policy) throw new Error('expected a valid policy override');
     expect(resolveScanOutcome(unavailableOutcome('too_large'), policy)).toEqual({
       decision: 'allow',
-      source: 'policy',
+      rule: null,
+      failOpen: true,
       reason: 'too_large',
     });
   });

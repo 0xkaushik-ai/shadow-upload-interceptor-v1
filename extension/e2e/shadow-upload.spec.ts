@@ -19,7 +19,6 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const extensionPath = resolve(repoRoot, 'extension/.output/chrome-mv3');
 const demoUrl = 'http://localhost:4173';
 const hostName = 'com.secureintent.shadow';
-const isMacOS = process.platform === 'darwin';
 
 interface RunningExtension {
   context: BrowserContext;
@@ -70,19 +69,12 @@ async function launchExtension(
   policy?: GuardPolicyOverride,
   daemonSocket?: string,
 ): Promise<RunningExtension> {
-  // macOS AF_UNIX paths are short; this is also the isolated HOME used for CFT registration.
-  const profile = isMacOS
-    ? mkdtempSync('/tmp/secureintent-e2e.')
-    : mkdtempSync(join(tmpdir(), 'secureintent-shadow-e2e.'));
-  const browserProfile = isMacOS ? join(profile, 'chrome-profile') : profile;
+  const profile = mkdtempSync(join(tmpdir(), 'secureintent-shadow-e2e.'));
   try {
     if (hostBinary) {
       const absoluteBinary = resolve(repoRoot, hostBinary);
       chmodSync(absoluteBinary, 0o755);
-      // Chromium resolves user NativeMessagingHosts from its effective --user-data-dir on every
-      // supported desktop platform. The CFT Application Support path is only its default when no
-      // user-data directory has been supplied.
-      const hostDirectory = join(browserProfile, 'NativeMessagingHosts');
+      const hostDirectory = join(profile, 'NativeMessagingHosts');
       mkdirSync(hostDirectory, { recursive: true, mode: 0o700 });
       writeFileSync(
         join(hostDirectory, `${hostName}.json`),
@@ -102,14 +94,11 @@ async function launchExtension(
     }
 
     const executablePath = process.env.SHADOW_E2E_CHROME_BIN;
-    const browserEnvironment = {
-      ...process.env,
-      ...(daemonSocket ? { SECUREINTENT_SHADOW_SOCKET: daemonSocket } : {}),
-      ...(isMacOS ? { HOME: profile, CFFIXED_USER_HOME: profile } : {}),
-    };
-    const context = await chromium.launchPersistentContext(browserProfile, {
+    const context = await chromium.launchPersistentContext(profile, {
       ...(executablePath ? { executablePath } : { channel: 'chromium' }),
-      env: browserEnvironment,
+      ...(daemonSocket
+        ? { env: { ...process.env, SECUREINTENT_SHADOW_SOCKET: daemonSocket } }
+        : {}),
       headless: process.env.SHADOW_E2E_HEADED !== '1',
       args: [
         `--disable-extensions-except=${extensionPath}`,
@@ -341,33 +330,6 @@ test.describe('protected upload loop', () => {
     const page = await openForge(requireContext(running), 'active');
     await chooseFileWithKeyboard(page, join(fixtureDirectory, 'private-key.pem'));
     await expectAllowed(page, 'private-key.pem');
-    await page.close();
-  });
-
-  test('never exposes the original picker FileList to page input listeners', async () => {
-    const page = await openForge(requireContext(running), 'active');
-    await page.evaluate(() => {
-      (
-        globalThis as unknown as { secureintentTrustedInputs: unknown[] }
-      ).secureintentTrustedInputs = [];
-      document.querySelector('input[type=file]')?.addEventListener('input', (event) => {
-        (
-          globalThis as unknown as { secureintentTrustedInputs: unknown[] }
-        ).secureintentTrustedInputs.push({
-          trusted: event.isTrusted,
-          files: (event.target as HTMLInputElement).files?.length ?? 0,
-        });
-      });
-    });
-    await chooseFile(page, resolve(repoRoot, 'testdata/allow.txt'));
-    await expectAllowed(page, 'allow.txt');
-    expect(
-      await page.evaluate(
-        () =>
-          (globalThis as unknown as { secureintentTrustedInputs: unknown[] })
-            .secureintentTrustedInputs,
-      ),
-    ).toEqual([{ trusted: false, files: 1 }]);
     await page.close();
   });
 

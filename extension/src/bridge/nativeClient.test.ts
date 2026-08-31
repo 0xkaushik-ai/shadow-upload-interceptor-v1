@@ -44,6 +44,8 @@ function request(): ScanFileRequest {
   return {
     type: 'scan-file',
     scanId: 'scan-1',
+    name: 'safe.txt',
+    mime: 'text/plain',
     size: 3,
     bytes: new Uint8Array([1, 2, 3]),
   };
