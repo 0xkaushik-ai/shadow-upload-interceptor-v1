@@ -59,8 +59,9 @@ different copy, so scanner outages are never presented as detected credentials.
 
 ## Prerequisites
 
-- Google Chrome 148+ for manual loading. The disposable launcher supports Chrome for Testing or
-  Chromium 148+ on macOS.
+- Google Chrome 148+ for manual loading. The disposable launcher reuses Chrome for Testing or
+  Chromium 148+ when present and downloads Playwright Chromium automatically when neither is
+  installed.
 - [Node.js](https://nodejs.org/en/download) 22 or newer. The launchers select the pinned pnpm
   10.28.2 automatically; a global pnpm installation is not required.
 - [Rust](https://www.rust-lang.org/tools/install) 1.85 or newer.
@@ -78,19 +79,18 @@ the page context. Native Messaging remains JSON and is base64-chunked only at th
 ## One-command demo
 
 The launchers build everything locally, use a fresh browser profile, and remove their temporary
-runtime state on exit. They never require a pre-installed pnpm version or an explicit browser path
-when a supported browser is installed in a standard location.
+runtime state on exit. They do not require a global pnpm installation or a preinstalled browser.
 
-Start from the immutable macOS v1.0.0 release:
+Start from the current macOS branch:
 
 ```bash
-git clone --branch macos-part1-v1.0.0 \
+git clone --branch shadow-upload-interceptor-macos-version \
   https://github.com/0xkaushik-ai/shadow-upload-interceptor-v1.git \
   shadow-upload-interceptor
 cd shadow-upload-interceptor
 ```
 
-macOS, assessed detached Tauri daemon (Chrome for Testing or Chromium is auto-discovered):
+macOS, assessed detached Tauri daemon:
 
 ```bash
 chmod +x run-macos.sh
@@ -98,15 +98,10 @@ chmod +x run-macos.sh
 ```
 
 Use plain `./run-macos.sh` only when you intentionally want the dependency-light native daemon
-instead of the assessed Tauri executable. If browser auto-discovery cannot find a compatible
-binary, install one into the Playwright cache with:
-
-```bash
-npx --yes pnpm@10.28.2 --dir extension install --frozen-lockfile
-npx --yes pnpm@10.28.2 --dir extension exec playwright install chromium
-```
-
-You can override discovery with `DEMO_CHROME_BIN=/absolute/path/to/browser`.
+instead of the assessed Tauri executable. The launcher reuses a compatible browser from the system
+or Playwright cache; if none exists, it installs the locked extension dependencies, downloads
+Playwright Chromium, and continues automatically. You can override discovery with
+`DEMO_CHROME_BIN=/absolute/path/to/browser`.
 
 The launcher installs pnpm dependencies, builds the WXT extension, builds and registers the Rust
 broker and zero-window Tauri daemon, serves Forge on port 4173, and opens a fresh temporary Chrome
@@ -114,16 +109,14 @@ for Testing or Chromium profile with the unpacked extension loaded. The Native M
 registers only the small broker; the separate Tauri process owns the private listener and scan loop.
 Chrome may create and terminate brokers without owning the daemon lifecycle.
 
-The launcher discovers compatible Playwright/Puppeteer browser caches or accepts
-`DEMO_CHROME_BIN=/path/to/chrome`. It places the disposable profile, Native Messaging manifest,
-socket, and service state under a short `/tmp/secureintent-shadow-*` path so macOS Unix socket limits
-are respected. Manual installation uses a persistent `launchd` user agent. The default launcher
-substitutes the standalone Rust daemon for the assessed Tauri executable; pass `--tauri-daemon` for
-the official Part 1 path.
+The launcher places the disposable profile, Native Messaging manifest, socket, and service state
+under a short `/tmp/secureintent-shadow-*` path so macOS Unix socket limits are respected. Manual
+installation uses a persistent `launchd` user agent. The default launcher substitutes the
+standalone Rust daemon for the assessed Tauri executable; pass `--tauri-daemon` for the official
+Part 1 path.
 
-On macOS, `./run-macos.sh` finds Chrome for Testing or Chromium in the standard application and
-Playwright-cache paths, checks version 148+, then runs the shared launcher with its pinned pnpm
-selection. Set `DEMO_CHROME_BIN` to override discovery.
+On macOS, `./run-macos.sh` delegates browser discovery and automatic installation to the shared
+launcher, which also checks version 148+ and selects the pinned pnpm version.
 
 Because Chrome resolves user-level Native Messaging hosts relative to an overridden user-data
 directory, the launcher installs a pinned host manifest inside its disposable profile. Manual setup
