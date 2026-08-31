@@ -1,66 +1,75 @@
-# From Individual Pro to Enterprise Teams: a 12-month technical direction
+# From Individual Pro to Enterprise Teams
 
-SecureIntent should become a destination firewall, not another employee-surveillance agent. That
-distinction is both our architectural constraint and our market advantage: we inspect data only at
-the moment a developer intentionally transfers it toward a governed destination, make the decision
-locally, and retain no raw content.
+SecureIntent inspects only the moment work is leaving toward a governed destination, decides on
+the device, and sends the cloud configuration and counts — never the work. Individual Pro is that
+firewall a developer will leave on. Enterprise is the same engine with an org allowlist, signed
+rules, and fleet posture. We do not insert a content cloud in between.
 
-## 1. BYOD: protect the work boundary, not the person
+## 1. BYOD: missing capability, not a privacy policy
 
-On a personal machine, “scan everything” is unacceptable. The daemon should never crawl folders,
-capture global keystrokes, inspect password managers, proxy banking traffic, or build browsing
-history. The browser extension and explicit IDE integrations identify a narrow event: a paste or
-file is leaving for an organization-governed AI/code destination. Only that transfer is presented
-to the local Rust engine; unrelated personal activity never enters our process.
+A personal laptop is usually one browser. Separate work and personal Chrome profiles are extra
+defense, not the guarantee. Bank passwords stay private because they never become an input.
 
-Work policy must be visible. Developers should see which destinations and rule categories their
-organization manages, why a transfer was blocked, when policy last updated, and whether protection
-is healthy. Corporate and personal browser profiles provide an additional scope boundary, while an
-emergency bypass can be policy-controlled, time-bounded, and visible to the developer. Enforcement
-returns a decision and rule identifier—not the secret, file, path, prompt, or surrounding source.
-This model treats the engineer as the asset: explain the risk at the moment of action, preserve the
-safe path, and avoid ambient monitoring.
+The extension is injected only on an org destination allowlist (Claude, ChatGPT, Cursor, internal
+AI). A bank tab does not get a content script, so it cannot capture or forward anything. The daemon
+has no disk crawl, keylogger, TLS intercept, or “scan this tab” API. It accepts a buffer only from
+the pinned Native Messaging host, and only for paste or file-upload events the extension already
+scoped. It returns a decision and a rule identifier — not the secret, file, path, or prompt.
 
-## 2. Decentralized policy without a permanent cloud connection
+Developers see which destinations are governed, why a transfer was blocked, and that personal
+browsing is out of scope. Any emergency bypass is time-bounded, policy-controlled, and visible.
 
-Enterprise control should be broadcast configuration with local evaluation. The control plane
-publishes canonical, versioned rule bundles containing destination scope, detector bytecode/data,
-severity, expiry, rollout channel, and emergency controls. Every bundle is signed with an offline
-root-backed Ed25519 key. The daemon verifies the signature, schema, organization binding, expiry,
-and monotonic version before atomically replacing its last-known-good policy. A two-hour jittered
-poll, browser/daemon startup check, and explicit admin refresh are enough; enforcement does not need
-a live socket to SecureIntent.
+## 2. Policy in Rust, console in React, no live socket
 
-For 1,000 developers, staged channels—canary, 10%, 50%, general—limit false-positive blast radius.
-The daemon compiles rules once, evaluates offline, retains the previous valid bundle for rollback,
-and honors a separately signed kill switch. If the network disappears, last-known-good policy keeps
-working until its declared grace period. If verification fails, the candidate bundle is rejected
-without weakening the active one.
+React is the CISO console: destinations, rules, rollout, posture. Rust on the laptop is the
+offline evaluator. The cloud stores signed configuration, not files.
 
-Telemetry is an append-only queue of privacy-minimized outcomes: anonymous installation identifier,
-policy version, rule ID, destination category, decision, coarse file-size bucket, latency, and
-daemon health. It never includes raw bytes, filenames, paths, matched substrings, prompts, or source
-context. Optional deduplication can use a per-install salted fingerprint under explicit enterprise
-policy, but content-derived telemetry is off by default. Events batch opportunistically with bounded
-disk size, encryption at rest, backoff, and deletion after acknowledgement. The cloud aggregates
-posture and rule effectiveness; it cannot reconstruct developer work.
+When the machine has network — startup, a jittered poll, or an explicit refresh — the daemon pulls
+a versioned bundle, checks organization binding, signature, and monotonic version, then activates
+it atomically. Offline, or if a candidate fails verification, last-known-good stays in force.
+Enforcement does not need our servers.
 
-The 12-month sequence is: harden the local policy runtime and signed updates; add managed enrollment
-and profile-scoped destination policy; ship staged rollout and privacy-preserving health metrics;
-then expose CISO controls and aggregate reporting. The dashboard is last because trustworthy local
-enforcement—not a graph—is the product.
+Year-one custom “proprietary signatures” are the same shape as today’s mock registry: org-supplied
+literals, regexes, and fingerprints of internal marks, evaluated on-device. We do not upload source
+to match it in the cloud. Sandboxed richer detectors are a post-pilot increment, not the seed
+architecture.
 
-## 3. Why local-first DLP now
+For 1,000 seats, bundles roll canary → 10% → 50% → all. A bad rule reverts to last-known-good. A
+separately signed kill switch can disable one rule without a full republish. If last-known-good
+passes its declared expiry, we fail closed on governed destinations only — not on the rest of the
+personal machine.
 
-The modern leak path sits inside approved SaaS: a prompt box, file picker, coding agent, or support
-chat already allowed through the network perimeter. Developers paste credentials and upload logs to
-move quickly, while generative systems make those transfers routine. Domain blocking cannot
-distinguish a harmless question from a production kubeconfig, and routing proprietary data through
-a DLP vendor merely creates another copy of the material we promised to protect.
+Telemetry is a local queue, flushed when online, deleted after ack: anonymous install id, policy
+version, rule id, destination category, allow/block, size bucket, latency, daemon health. Never
+bytes, filenames, paths, matched text, prompts, user identity, or content hashes. The console can
+say how many devices are on v12 and how often a rule fired. It cannot reconstruct the work.
 
-Legacy cloud DLP also taxes the developer with latency, opaque blocks, broad surveillance, and
-workflows they learn to evade. A local-first engine sees the relevant bytes at the last responsible
-moment, works offline, returns an immediate explainable decision, and lets safe work continue. That
-is the rare architecture a CISO can mandate and an engineer will choose to leave enabled. Our moat
-is not collecting more company data; it is making useful security decisions without ever needing
-to possess it.
+## 3. Why local-first, right now
+
+The leak is no longer a USB stick or a blocked domain. It is a file drop into an AI box the
+firewall already allows — Claude, ChatGPT, Copilot, Cursor. Developers do that to move. Assistants
+made pasting production context normal.
+
+Network DLP is blind inside HTTPS to an approved vendor. Cloud DLP has to take a copy of the source
+to inspect it: a second store of the crown jewels, and an engineer who will turn the agent off.
+Domain blocks cannot tell “parse this error” from a kubeconfig.
+
+Local-first is the design a CISO can mandate and a developer will leave enabled: inspect at the last
+responsible moment, on the device, no vendor copy, explain the block, let safe work through. Shadow
+AI is already the working path. Legacy DLP is either blind to it or hostile to the people doing the
+work.
+
+## 12 months: the bridge is enrollment, not a second product
+
+Pro users who join an org keep the same daemon. They start receiving org destinations and org rules.
+
+- **Q1 — Pro, enterprise-shaped.** Harden the local slice and signed installers. Destination
+  allowlists even before an org exists. No cloud content.
+- **Q2 — Join.** Corp-owned fleets: MDM / managed extension policy. BYOD: explicit join code with
+  visible scope. Signed rule pull and last-known-good. Enrollment must not widen hooks to the whole
+  machine.
+- **Q3 — Control, still local.** CISO console publishes custom rule bundles. Windows daemon.
+  100-seat pilot. Telemetry is health, version, and decision counts.
+- **Q4 — Phase 3 without a content lake.** SSO/RBAC, staged 1,000, posture view. Seed enterprise is
+  control of policy and fleet. The dashboard is last because untrusted enforcement makes graphs
+  useless.

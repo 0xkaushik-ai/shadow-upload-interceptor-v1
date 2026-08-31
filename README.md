@@ -349,4 +349,4 @@ then show `node scripts/smoke-detached.mjs` reporting that one daemon PID surviv
 only Block or Allow.”
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for protocol and threat-model details and
-[PART2-STRATEGIC-BRIEF.md](PART2-STRATEGIC-BRIEF.md) for the 12-month enterprise direction.
+[PART2-STRATEGIC-BRIEF.md](PART2-STRATEGIC-BRIEF.md) for the 12-month Pro → Enterprise brief.
