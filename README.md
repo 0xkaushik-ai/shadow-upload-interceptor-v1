@@ -56,7 +56,8 @@ different copy, so scanner outages are never presented as detected credentials.
 
 ## Prerequisites
 
-- Google Chrome 148+ for manual loading; Chrome for Testing or Chromium 148+ for `run-linux.sh`
+- Google Chrome 148+ for manual loading; `run-linux.sh` reuses Chrome for Testing or Chromium 148+
+  when present and downloads Playwright Chromium automatically when neither is installed
 - Node.js 22 or newer (`run-linux.sh` uses pnpm 10 from `PATH` or bootstraps it through `npx`)
 - Rust 1.85 or newer
 - A Linux systemd user session for persistent manual installation
@@ -84,11 +85,13 @@ for Testing or Chromium profile with the unpacked extension loaded. The Native M
 registers only the small broker; the separate Tauri process owns the private listener and scan loop.
 Chrome may create and terminate brokers without owning the daemon lifecycle.
 
-The launcher discovers compatible Playwright/Puppeteer browser caches or accepts
-`DEMO_CHROME_BIN=/path/to/chrome`. It cleans up its temporary daemon when the demo ends; manual
-installation uses a persistent user service. For a quick dependency-light check of the identical
-scanner/protocol core, use `./run-demo.sh`; that variant substitutes the standalone Rust daemon for
-the assessed Tauri executable.
+The launcher reuses a compatible Chrome for Testing or Chromium from `PATH` or known
+Playwright/Puppeteer caches, or accepts `DEMO_CHROME_BIN=/path/to/chrome`. If none is installed, it
+downloads the Chromium version pinned by the extension's Playwright dependency and continues
+automatically. It cleans up its temporary daemon when the demo ends; manual installation uses a
+persistent user service. For a quick dependency-light check of the identical scanner/protocol core,
+use `./run-demo.sh`; that variant substitutes the standalone Rust daemon for the assessed Tauri
+executable.
 
 Because Chrome resolves user-level Native Messaging hosts relative to an overridden user-data
 directory, the launcher installs a pinned host manifest inside its disposable profile. Manual setup

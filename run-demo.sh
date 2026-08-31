@@ -33,7 +33,9 @@ Options:
   -h, --help      Show this help.
 
 Environment:
-  DEMO_CHROME_BIN  Chrome for Testing or Chromium executable to launch.
+  DEMO_CHROME_BIN  Optional Chrome for Testing or Chromium executable to launch.
+                   When omitted and no compatible browser is found, Playwright
+                   Chromium is downloaded automatically.
 EOF
 }
 
@@ -62,8 +64,13 @@ classify_browser() {
 resolve_browser() {
   local candidate
 
-  if [[ -n "${DEMO_CHROME_BIN}" && ! -x "${DEMO_CHROME_BIN}" ]] && command -v "${DEMO_CHROME_BIN}" >/dev/null 2>&1; then
-    DEMO_CHROME_BIN="$(command -v "${DEMO_CHROME_BIN}")"
+  if [[ -n "${DEMO_CHROME_BIN}" && ! -x "${DEMO_CHROME_BIN}" ]]; then
+    if command -v "${DEMO_CHROME_BIN}" >/dev/null 2>&1; then
+      DEMO_CHROME_BIN="$(command -v "${DEMO_CHROME_BIN}")"
+    else
+      echo "DEMO_CHROME_BIN is not an executable or command: ${DEMO_CHROME_BIN}" >&2
+      exit 1
+    fi
   fi
 
   if [[ -z "${DEMO_CHROME_BIN}" ]]; then
@@ -85,9 +92,20 @@ resolve_browser() {
     done
   fi
 
-  if [[ -z "${DEMO_CHROME_BIN}" || ! -x "${DEMO_CHROME_BIN}" ]]; then
-    echo "Chrome for Testing or Chromium 148+ was not found." >&2
-    echo "Install one, set DEMO_CHROME_BIN, or use the README's manual Load unpacked steps." >&2
+  if [[ -z "${DEMO_CHROME_BIN}" ]]; then
+    echo "Chrome for Testing or Chromium was not found; downloading Playwright Chromium..."
+    "${PNPM_COMMAND[@]}" --dir "${EXTENSION_DIR}" install --frozen-lockfile
+    "${PNPM_COMMAND[@]}" --dir "${EXTENSION_DIR}" exec playwright install chromium
+    DEMO_CHROME_BIN="$(
+      "${PNPM_COMMAND[@]}" --dir "${EXTENSION_DIR}" exec node -e '
+        const { chromium } = require("@playwright/test");
+        process.stdout.write(chromium.executablePath());
+      '
+    )"
+  fi
+
+  if [[ ! -x "${DEMO_CHROME_BIN}" ]]; then
+    echo "Playwright reported a missing Chromium executable: ${DEMO_CHROME_BIN:-none}" >&2
     exit 1
   fi
 

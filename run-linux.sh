@@ -18,7 +18,8 @@ Options:
   -h, --help      Show this help.
 
 Environment:
-  DEMO_CHROME_BIN  Chrome for Testing or Chromium 148+ executable to launch.
+  DEMO_CHROME_BIN  Optional Chrome for Testing or Chromium 148+ executable.
+                   Playwright Chromium is downloaded automatically when absent.
 EOF
 }
 
